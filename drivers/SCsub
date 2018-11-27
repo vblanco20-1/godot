@@ -33,6 +33,8 @@ else:
 
 # Core dependencies
 SConscript("png/SCsub")
+SConscript("microprofile/SCsub")
+
 
 # Tools override
 # FIXME: Should likely be integrated in the tools/ codebase
