@@ -38,7 +38,7 @@
 #include "scene/resources/packed_scene.h"
 #include "scene/scene_string_names.h"
 #include "viewport.h"
-
+#include "main/profiler.h"
 VARIANT_ENUM_CAST(Node::PauseMode);
 
 void Node::_notification(int p_notification) {
@@ -46,7 +46,7 @@ void Node::_notification(int p_notification) {
 	switch (p_notification) {
 
 		case NOTIFICATION_PROCESS: {
-
+			SCOPE_PROFILE(Node_Process);
 			if (get_script_instance()) {
 
 				Variant time = get_process_delta_time();

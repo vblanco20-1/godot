@@ -84,6 +84,7 @@
 // Singletons
 
 // Initialized in setup()
+static Remotery *g_Remotery = NULL;
 static Engine *engine = NULL;
 static ProjectSettings *globals = NULL;
 static InputMap *input_map = NULL;
@@ -330,7 +331,7 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 
 	PROFILER_INIT();
 
-	SCOPE_PROFILEI("main","setup()",PCOL_RED);
+	SCOPE_PROFILE(Setup);
 
 	RID_OwnerBase::init_rid();
 
@@ -1792,6 +1793,8 @@ static uint64_t idle_process_max = 0;
 
 bool Main::iteration() {
 
+	SCOPE_PROFILE(Main_FrameStep);
+
 	uint64_t ticks = OS::get_singleton()->get_ticks_usec();
 	Engine::get_singleton()->_frame_ticks = ticks;
 	main_timer_sync.set_cpu_ticks_usec(ticks);
@@ -1829,6 +1832,7 @@ bool Main::iteration() {
 
 	for (int iters = 0; iters < advance.physics_steps; ++iters) {
 
+		SCOPE_PROFILE(Main_PhysicsStep);
 		uint64_t physics_begin = OS::get_singleton()->get_ticks_usec();
 
 		PhysicsServer::get_singleton()->sync();
@@ -2044,3 +2048,6 @@ void Main::cleanup() {
 	OS::get_singleton()->clear_last_error();
 	OS::get_singleton()->finalize_core();
 }
+
+
+

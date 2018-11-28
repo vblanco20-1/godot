@@ -34,6 +34,7 @@
 #include "visual_server_canvas.h"
 #include "visual_server_global.h"
 #include "visual_server_scene.h"
+#include "main/profiler.h"
 
 void VisualServerViewport::_draw_viewport(Viewport *p_viewport, ARVRInterface::Eyes p_eye) {
 
@@ -243,6 +244,9 @@ void VisualServerViewport::_draw_viewport(Viewport *p_viewport, ARVRInterface::E
 }
 
 void VisualServerViewport::draw_viewports() {
+
+	SCOPE_PROFILE(VisualServer_DrawViewports);
+
 	// get our arvr interface in case we need it
 	Ref<ARVRInterface> arvr_interface = ARVRServer::get_singleton()->get_primary_interface();
 
@@ -254,10 +258,12 @@ void VisualServerViewport::draw_viewports() {
 	}
 
 	//sort viewports
+
 	active_viewports.sort_custom<ViewportSort>();
 
 	//draw viewports
 	for (int i = 0; i < active_viewports.size(); i++) {
+		SCOPE_PROFILE(VisualServer_DrawViewport);
 
 		Viewport *vp = active_viewports[i];
 

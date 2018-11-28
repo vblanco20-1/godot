@@ -35,6 +35,7 @@
 #include "core/project_settings.h"
 #include "rasterizer_canvas_gles3.h"
 #include "servers/visual/visual_server_raster.h"
+#include "main/profiler.h"
 
 #ifndef GLES_OVER_GL
 #define glClearDepth glClearDepthf
@@ -1977,6 +1978,8 @@ void RasterizerSceneGLES3::_set_cull(bool p_front, bool p_disabled, bool p_rever
 }
 
 void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_element_count, const Transform &p_view_transform, const CameraMatrix &p_projection, GLuint p_base_env, bool p_reverse_cull, bool p_alpha_pass, bool p_shadow, bool p_directional_add, bool p_directional_shadows) {
+
+	SCOPE_PROFILE_GPU(GLES3_RenderList);
 
 	glBindBufferBase(GL_UNIFORM_BUFFER, 0, state.scene_ubo); //bind globals ubo
 
@@ -4052,7 +4055,7 @@ void RasterizerSceneGLES3::_post_process(Environment *env, const CameraMatrix &p
 }
 
 void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-
+	SCOPE_PROFILE_GPU(GLES3_RenderScene);
 	//first of all, make a new render pass
 	render_pass++;
 
@@ -4501,7 +4504,7 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 void RasterizerSceneGLES3::render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, InstanceBase **p_cull_result, int p_cull_count) {
 
 	render_pass++;
-
+	SCOPE_PROFILE_GPU(GLES3_RenderShadow);
 	directional_light = NULL;
 
 	LightInstance *light_instance = light_instance_owner.getornull(p_light);

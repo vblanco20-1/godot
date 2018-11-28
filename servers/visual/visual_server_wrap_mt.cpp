@@ -41,6 +41,7 @@ void VisualServerWrapMT::thread_draw(bool p_swap_buffers, double frame_step) {
 
 	if (!atomic_decrement(&draw_pending)) {
 
+		
 		visual_server->draw(p_swap_buffers, frame_step);
 	}
 }
@@ -64,7 +65,7 @@ void VisualServerWrapMT::thread_loop() {
 	OS::get_singleton()->make_rendering_thread();
 
 	visual_server->init();
-
+	
 	exit = false;
 	draw_thread_up = true;
 	while (!exit) {

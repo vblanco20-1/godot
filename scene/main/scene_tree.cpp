@@ -48,6 +48,7 @@
 #include "servers/physics_2d_server.h"
 #include "servers/physics_server.h"
 #include "viewport.h"
+#include "main/profiler.h"
 
 #include <stdio.h>
 
@@ -460,7 +461,7 @@ void SceneTree::init() {
 bool SceneTree::iteration(float p_time) {
 
 	root_lock++;
-
+	SCOPE_PROFILE(SceneTree_Iteration);
 	current_frame++;
 
 	flush_transform_notifications();

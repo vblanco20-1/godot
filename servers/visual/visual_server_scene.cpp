@@ -31,7 +31,9 @@
 #include "visual_server_scene.h"
 #include "core/os/os.h"
 #include "visual_server_global.h"
+
 #include "visual_server_raster.h"
+#include "main/profiler.h" 
 /* CAMERA API */
 
 RID VisualServerScene::camera_create() {
@@ -864,11 +866,12 @@ void VisualServerScene::instance_geometry_set_as_instance_lod(RID p_instance, RI
 }
 
 void VisualServerScene::_update_instance(Instance *p_instance) {
+	SCOPE_PROFILE(VisualServer_UpdateInstance);
 
 	p_instance->version++;
 
 	if (p_instance->base_type == VS::INSTANCE_LIGHT) {
-
+		SCOPE_PROFILE(VisualServer_UpdateInstance_Light);
 		InstanceLightData *light = static_cast<InstanceLightData *>(p_instance->base_data);
 
 		VSG::scene_render->light_instance_set_transform(light->instance, p_instance->transform);
@@ -876,7 +879,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 	}
 
 	if (p_instance->base_type == VS::INSTANCE_REFLECTION_PROBE) {
-
+		SCOPE_PROFILE(VisualServer_UpdateInstance_Reflection);
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(p_instance->base_data);
 
 		VSG::scene_render->reflection_probe_instance_set_transform(reflection_probe->instance, p_instance->transform);
@@ -894,6 +897,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	if ((1 << p_instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) {
 
+		SCOPE_PROFILE(VisualServer_UpdateInstance_Geo);
 		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 		//make sure lights are updated if it casts shadow
 
@@ -949,7 +953,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		p_instance->octree_id = p_instance->scenario->octree.create(p_instance, new_aabb, 0, pairable, base_type, pairable_mask);
 
 	} else {
-
+		SCOPE_PROFILE(VisualServer_UpdateOctree);
 		/*
 		if (new_aabb==p_instance->data.transformed_aabb)
 			return;
@@ -1190,7 +1194,7 @@ _FORCE_INLINE_ static void _light_capture_sample_octree(const RasterizerStorage:
 }
 
 _FORCE_INLINE_ static Color _light_capture_voxel_cone_trace(const RasterizerStorage::LightmapCaptureOctree *p_octree, const Vector3 &p_pos, const Vector3 &p_dir, float p_aperture, int p_cell_subdiv) {
-
+	SCOPE_PROFILE(Rasterizer_LightCaptureConeTrace);
 	float bias = 0.0; //no need for bias here
 	float max_distance = (Vector3(1, 1, 1) * (1 << (p_cell_subdiv - 1))).length();
 
@@ -1214,6 +1218,8 @@ _FORCE_INLINE_ static Color _light_capture_voxel_cone_trace(const RasterizerStor
 }
 
 void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance) {
+
+	
 
 	InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 
@@ -1242,6 +1248,7 @@ void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance)
 
 	zeromem(p_instance->lightmap_capture_data.ptrw(), 12 * sizeof(Color));
 	//this could use some sort of blending..
+	int nupdates = 0;
 	for (List<Instance *>::Element *E = geom->lightmap_captures.front(); E; E = E->next()) {
 		const PoolVector<RasterizerStorage::LightmapCaptureOctree> *octree = VSG::storage->lightmap_capture_get_octree_ptr(E->get()->base);
 		//print_line("octree size: " + itos(octree->size()));
@@ -1254,14 +1261,15 @@ void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance)
 		PoolVector<RasterizerStorage::LightmapCaptureOctree>::Read octree_r = octree->read();
 
 		Vector3 pos = to_cell_xform.xform(p_instance->transform.origin);
-
+		nupdates++;
 		for (int i = 0; i < 12; i++) {
-
+			
 			Vector3 dir = to_cell_xform.basis.xform(cone_traces[i]).normalized();
 			Color capture = _light_capture_voxel_cone_trace(octree_r.ptr(), pos, dir, cone_aperture, cell_subdiv);
 			p_instance->lightmap_capture_data.write[i] += capture;
 		}
 	}
+	//printf("Updates %i",nupdates);
 }
 
 bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_shadow_atlas, Scenario *p_scenario) {
@@ -1717,7 +1725,7 @@ void VisualServerScene::render_camera(RID p_camera, RID p_scenario, Size2 p_view
 
 void VisualServerScene::render_camera(Ref<ARVRInterface> &p_interface, ARVRInterface::Eyes p_eye, RID p_camera, RID p_scenario, Size2 p_viewport_size, RID p_shadow_atlas) {
 	// render for AR/VR interface
-
+	SCOPE_PROFILE(RenderCamera);
 	Camera *camera = camera_owner.getornull(p_camera);
 	ERR_FAIL_COND(!camera);
 
@@ -1803,7 +1811,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	// Note, in stereo rendering:
 	// - p_cam_transform will be a transform in the middle of our two eyes
 	// - p_cam_projection is a wider frustrum that encompasses both eyes
-
+	SCOPE_PROFILE(VisualServer_PrepareScene);
 	Scenario *scenario = scenario_owner.getornull(p_scenario);
 
 	render_pass++;
@@ -1819,7 +1827,10 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	float z_far = p_cam_projection.get_z_far();
 
 	/* STEP 2 - CULL */
-	instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+	{
+		SCOPE_PROFILE(VisualServer_OctreeCull);
+		instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+	}
 	light_cull_count = 0;
 
 	reflection_probe_cull_count = 0;
@@ -1837,7 +1848,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	//removed, will replace with culling
 
 	/* STEP 4 - REMOVE FURTHER CULLED OBJECTS, ADD LIGHTS */
-
+	{
+		SCOPE_PROFILE(VisualServer_PostCull);
 	for (int i = 0; i < instance_cull_count; i++) {
 
 		Instance *ins = instance_cull_result[i];
@@ -1982,6 +1994,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			ins->last_render_pass = render_pass;
 		}
 	}
+	}
 
 	/* STEP 5 - PROCESS LIGHTS */
 
@@ -1990,6 +2003,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	// directional lights
 	{
+		
+		SCOPE_PROFILE(VisualServer_DirectionalLights);
 
 		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * scenario->directional_lights.size());
 		int directional_shadow_count = 0;
@@ -2025,7 +2040,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	}
 
 	{ //setup shadow maps
-
+		SCOPE_PROFILE(VisualServer_ShadowMaps);
 		//SortArray<Instance*,_InstanceLightsort> sorter;
 		//sorter.sort(light_cull_result,light_cull_count);
 		for (int i = 0; i < light_cull_count; i++) {
@@ -3117,7 +3132,7 @@ bool VisualServerScene::_check_gi_probe(Instance *p_gi_probe) {
 }
 
 void VisualServerScene::render_probes() {
-
+	SCOPE_PROFILE(VisualServer_RenderProbes);
 	/* REFLECTION PROBES */
 
 	SelfList<InstanceReflectionProbeData> *ref_probe = reflection_probe_render_list.first();
@@ -3237,11 +3252,12 @@ void VisualServerScene::render_probes() {
 void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 
 	if (p_instance->update_aabb) {
+		SCOPE_PROFILE(VisualServer_UpdateAABB);
 		_update_instance_aabb(p_instance);
 	}
 
 	if (p_instance->update_materials) {
-
+		SCOPE_PROFILE(VisualServer_UpdateMaterials);
 		if (p_instance->base_type == VS::INSTANCE_MESH) {
 			//remove materials no longer used and un-own them
 
@@ -3408,8 +3424,11 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 }
 
 void VisualServerScene::update_dirty_instances() {
-
-	VSG::storage->update_dirty_resources();
+	SCOPE_PROFILE(VisualServer_UpdateInstances);
+	{
+		SCOPE_PROFILE(VisualServer_UpdateDirtyResources);
+		VSG::storage->update_dirty_resources();
+	}
 
 	while (_instance_update_list.first()) {
 

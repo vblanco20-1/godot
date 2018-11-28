@@ -2684,7 +2684,7 @@ void RasterizerSceneGLES2::render_scene(const Transform &p_cam_transform, const 
 }
 
 void RasterizerSceneGLES2::render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, InstanceBase **p_cull_result, int p_cull_count) {
-
+	
 	state.render_no_shadows = false;
 
 	LightInstance *light_instance = light_instance_owner.getornull(p_light);

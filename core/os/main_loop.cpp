@@ -31,6 +31,7 @@
 #include "main_loop.h"
 
 #include "core/script_language.h"
+#include "main/profiler.h"
 
 void MainLoop::_bind_methods() {
 
@@ -94,6 +95,7 @@ void MainLoop::init() {
 		get_script_instance()->call("_initialize");
 }
 bool MainLoop::iteration(float p_time) {
+	SCOPE_PROFILE(Main_Iteration);
 
 	if (get_script_instance())
 		return get_script_instance()->call("_iteration", p_time);
@@ -101,7 +103,7 @@ bool MainLoop::iteration(float p_time) {
 	return false;
 }
 bool MainLoop::idle(float p_time) {
-
+	SCOPE_PROFILE(Main_Idle);
 	if (get_script_instance())
 		return get_script_instance()->call("_idle", p_time);
 

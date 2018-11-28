@@ -31,9 +31,9 @@
 #include "rasterizer_storage_gles3.h"
 #include "core/engine.h"
 #include "core/project_settings.h"
+#include "main/profiler.h"
 #include "rasterizer_canvas_gles3.h"
 #include "rasterizer_scene_gles3.h"
-
 /* TEXTURE API */
 
 #define _EXT_COMPRESSED_RGB_PVRTC_4BPPV1_IMG 0x8C00
@@ -7871,6 +7871,8 @@ void RasterizerStorageGLES3::finalize() {
 }
 
 void RasterizerStorageGLES3::update_dirty_resources() {
+
+	SCOPE_PROFILE_GPU(GLES3_UpdateResources);
 
 	update_dirty_multimeshes();
 	update_dirty_skeletons();
