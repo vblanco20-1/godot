@@ -37,6 +37,7 @@
 #include "core/math/vector3.h"
 #include "core/print_string.h"
 #include "core/variant.h"
+#include "main/profiler.h"
 
 /**
 	@author Juan Linietsky <reduzio@gmail.com>
@@ -1297,7 +1298,7 @@ int Octree<T, use_pairs, AL>::cull_convex(const Vector<Plane> &p_convex, T **p_r
 
 	if (!root)
 		return 0;
-
+	SCOPE_PROFILE(Octree_CullConvex);
 	int result_count = 0;
 	pass++;
 	_CullConvexData cdata;

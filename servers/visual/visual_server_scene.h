@@ -40,6 +40,7 @@
 #include "core/os/thread.h"
 #include "core/self_list.h"
 #include "servers/arvr/arvr_interface.h"
+#include "thirdparty/entt/entt.hpp"
 
 class VisualServerScene {
 public:
@@ -115,7 +116,16 @@ public:
 	/* SCENARIO API */
 
 	struct Instance;
-
+	struct ComponentInstance {
+		Instance *inst;
+		
+	};
+	struct Dirty {
+	};
+	struct InstanceAABB {
+		AABB aabb;
+		uint32_t mask;
+	};
 	struct Scenario : RID_Data {
 
 		VS::ScenarioDebugMode debug;
@@ -157,11 +167,12 @@ public:
 	struct Instance : RasterizerScene::InstanceBase {
 
 		RID self;
+
 		//scenario stuff
 		OctreeElementID octree_id;
 		Scenario *scenario;
 		SelfList<Instance> scenario_item;
-
+		uint32_t entity_id;
 		//aabb stuff
 		bool update_aabb;
 		bool update_materials;
@@ -206,7 +217,7 @@ public:
 
 			update_aabb = false;
 			update_materials = false;
-
+			entity_id = entt::null;
 			extra_margin = 0;
 
 			object_ID = 0;
@@ -226,7 +237,9 @@ public:
 		}
 
 		~Instance() {
-
+			if (singleton->entity_registry.valid(entity_id)) {
+				singleton->entity_registry.destroy(entity_id);
+			}
 			if (base_data)
 				memdelete(base_data);
 			if (custom_aabb)
@@ -437,6 +450,7 @@ public:
 	};
 
 	int instance_cull_count;
+	
 	Instance *instance_cull_result[MAX_INSTANCE_CULL];
 	Instance *instance_shadow_cull_result[MAX_INSTANCE_CULL]; //used for generating shadowmaps
 	Instance *light_cull_result[MAX_LIGHTS_CULLED];
@@ -447,6 +461,45 @@ public:
 	int reflection_probe_cull_count;
 
 	RID_Owner<Instance> instance_owner;
+	entt::registry<uint32_t> entity_registry;
+
+	//struct AccelStructure;
+	const size_t instance_block_size = 128;
+	struct InstanceBlock {
+		AABB bounding_boxes[128];
+		VisualServerScene::Instance *instance_pointers[128];
+		uint32_t masks[128];
+		bool visible[128];
+		uint8_t fill;
+	};
+	struct AccelStructure {
+		std::vector<AABB> chunk_aabb;
+		std::vector<InstanceBlock> chunk_blocks;
+		std::vector<char> chunk_visibility;
+	};
+
+
+	struct InstanceData {
+		AABB aabb;
+		VisualServerScene::Instance *inst;
+		uint32_t mask;
+		uint64_t morton;		
+
+		InstanceData() {
+
+		}
+		InstanceData(const InstanceData& Other)
+		{
+			aabb = Other.aabb;
+			inst = Other.inst;
+			mask = Other.mask;
+			morton = Other.morton;
+		}
+	};
+	AccelStructure acceleration_structure;
+	void build_accel_structure();
+
+	int entity_cull(const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t mask = 0xFFFFFFFF);
 
 	// from can be mesh, light,  area and portal so far.
 	virtual RID instance_create(); // from can be mesh, light, poly, area and portal so far.

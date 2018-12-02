@@ -135,19 +135,19 @@ void Node2D::_update_transform() {
 
 	VisualServer::get_singleton()->canvas_item_set_transform(get_canvas_item(), _mat);
 
-	if (!is_inside_tree())
-		return;
-
-	_notify_transform();
+	//if (!is_inside_tree())
+	//	return;
+	//
+	//_notify_transform();
 }
 
 void Node2D::set_position(const Point2 &p_pos) {
 
-	if (_xform_dirty)
+	//if (_xform_dirty)
 		((Node2D *)this)->_update_xform_values();
 	pos = p_pos;
 	_update_transform();
-	_change_notify("position");
+	//_change_notify("position");
 }
 
 void Node2D::set_rotation(float p_radians) {

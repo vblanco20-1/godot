@@ -203,6 +203,13 @@ public:
 		}
 #endif
 	}
+	template<typename F>
+	void for_each(F&&funct) {
+		for (typename Set<RID_Data *>::Element *E = id_map.front(); E; E = E->next()) {
+
+			funct(static_cast<T *>(E->get()));			
+		}
+	}
 };
 
 #endif
