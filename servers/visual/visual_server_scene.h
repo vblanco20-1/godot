@@ -41,6 +41,7 @@
 #include "core/self_list.h"
 #include "servers/arvr/arvr_interface.h"
 #include "thirdparty/entt/entt.hpp"
+#include <array>
 
 class VisualServerScene {
 public:
@@ -118,7 +119,6 @@ public:
 	struct Instance;
 	struct ComponentInstance {
 		Instance *inst;
-		
 	};
 	struct Dirty {
 	};
@@ -450,7 +450,7 @@ public:
 	};
 
 	int instance_cull_count;
-	
+
 	Instance *instance_cull_result[MAX_INSTANCE_CULL];
 	Instance *instance_shadow_cull_result[MAX_INSTANCE_CULL]; //used for generating shadowmaps
 	Instance *light_cull_result[MAX_LIGHTS_CULLED];
@@ -464,13 +464,46 @@ public:
 	entt::registry<uint32_t> entity_registry;
 
 	//struct AccelStructure;
-	const size_t instance_block_size = 128;
+	static const size_t instance_block_size = 128;
 	struct InstanceBlock {
-		AABB bounding_boxes[128];
-		VisualServerScene::Instance *instance_pointers[128];
-		uint32_t masks[128];
-		bool visible[128];
+		std::array<AABB, instance_block_size> bounding_boxes;
+		std::array<VisualServerScene::Instance *, instance_block_size> instance_pointers;
+		std::array<uint32_t, instance_block_size> masks;
+		std::array<bool, instance_block_size> visible;
 		uint8_t fill;
+		InstanceBlock() {
+			fill = 0;
+		}
+		InstanceBlock(const InstanceBlock &Other) {
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+		
+			fill = Other.fill;
+		}
+		InstanceBlock &operator=(InstanceBlock && Other)
+		{
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+		
+			fill = Other.fill;
+			return *this;
+		}
+		InstanceBlock &operator=(InstanceBlock &Other) {
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+		
+			fill = Other.fill;
+			return *this;
+		}
 	};
 	struct AccelStructure {
 		std::vector<AABB> chunk_aabb;
@@ -478,18 +511,15 @@ public:
 		std::vector<char> chunk_visibility;
 	};
 
-
 	struct InstanceData {
 		AABB aabb;
 		VisualServerScene::Instance *inst;
 		uint32_t mask;
-		uint64_t morton;		
+		uint64_t morton;
 
 		InstanceData() {
-
 		}
-		InstanceData(const InstanceData& Other)
-		{
+		InstanceData(const InstanceData &Other) {
 			aabb = Other.aabb;
 			inst = Other.inst;
 			mask = Other.mask;

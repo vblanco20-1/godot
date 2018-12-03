@@ -319,12 +319,14 @@ void VisualServerScene::build_accel_structure() {
 
 	auto view = entity_registry.persistent_view<InstanceAABB, ComponentInstance>();
 	int total_instances = view.size();
-	int total_blocks = total_instances / 128;
+	int total_blocks = (total_instances / instance_block_size)+1;
 
 	acceleration_structure.chunk_aabb.clear();
-	acceleration_structure.chunk_aabb.reserve(total_blocks);
+	acceleration_structure.chunk_aabb.reserve(total_blocks+5);
 	acceleration_structure.chunk_blocks.clear();
-	acceleration_structure.chunk_blocks.reserve(total_blocks);
+	acceleration_structure.chunk_blocks.reserve(total_blocks + 5);
+	acceleration_structure.chunk_visibility.clear();
+	acceleration_structure.chunk_visibility.reserve(total_blocks + 5);
 
 	std::vector<InstanceData> Instances;
 	Instances.reserve(total_instances);
@@ -356,34 +358,89 @@ void VisualServerScene::build_accel_structure() {
 		});
 	}
 	SCOPE_PROFILE(Refresh_Blocks) {
-		for (int b = 0; b < total_blocks; b++) {
-			acceleration_structure.chunk_aabb.push_back(Instances[b * 128].aabb);
-			acceleration_structure.chunk_blocks.push_back(InstanceBlock());
-			acceleration_structure.chunk_visibility.push_back(true);
-			AABB &BlockAAbb = acceleration_structure.chunk_aabb[b];
-			InstanceBlock &Block = acceleration_structure.chunk_blocks[b];
 
-			int idx = 0;
-			Block.fill = 0;
-			for (int i = b * 128; i < (b + 1) * 128; i++) {
-				if (i < total_instances) {
+		std::vector<InstanceData> BigInstances;
 
-					Block.bounding_boxes[idx] = Instances[i].aabb;
-					Block.instance_pointers[idx] = Instances[i].inst;
+		
+		BigInstances.reserve(200);
+		acceleration_structure.chunk_aabb.push_back(Instances[0].aabb);
+		acceleration_structure.chunk_blocks.push_back(InstanceBlock());
+		acceleration_structure.chunk_visibility.push_back(true);
+		bool bGenerateChunk = true;
+		//for (int b = 0; b < total_blocks; b++) {
+		for (InstanceData &instance : Instances) {
 
-					//if (!entity_registry.valid(Block.instance_pointers[idx]->entity_id)) {
-					//	printf("error in the ECS, pointer mismatch, %i  %i", i,idx);
-					//}
+			AABB *BlockAAbb = &acceleration_structure.chunk_aabb.back();
+			InstanceBlock*Block = &acceleration_structure.chunk_blocks.back();
+			if (Block->fill == instance_block_size - 1) {
 
-					Block.masks[idx] = Instances[i].mask;
-					idx++;
-					BlockAAbb.merge_with(Instances[i].aabb);
-				}
+				acceleration_structure.chunk_aabb.push_back(instance.aabb);
+				acceleration_structure.chunk_blocks.push_back(InstanceBlock());
+				acceleration_structure.chunk_visibility.push_back(true);
+
+				BlockAAbb = &acceleration_structure.chunk_aabb.back();
+				Block = &acceleration_structure.chunk_blocks.back();
+				Block->fill = 0;
 			}
-			Block.fill = idx;
+
+			//if (i < total_instances) {
+			AABB &InstanceAABB = instance.aabb;
+			Instance *InstancePtr = instance.inst;
+			uint32_t mask = instance.mask;
+			if (InstanceAABB.get_longest_axis_size() > 10) {
+
+				BigInstances.push_back(instance);
+
+			} else {
+				Block->bounding_boxes[Block->fill] = InstanceAABB;
+				Block->instance_pointers[Block->fill] = InstancePtr;
+				Block->masks[Block->fill] = mask;
+				Block->fill++;
+				BlockAAbb->merge_with(InstanceAABB);
+			}
+		}
+
+		size_t BigBlocks = Instances.size() / instance_block_size;
+		size_t numBig = Instances.size();
+		size_t numBlocks = acceleration_structure.chunk_aabb.size() + BigBlocks;
+		//acceleration_structure.chunk_aabb.reserve(numBlocks);
+		//acceleration_structure.chunk_blocks.reserve(numBlocks);
+		//acceleration_structure.chunk_visibility.reserve(numBlocks);
+
+		acceleration_structure.chunk_aabb.push_back(AABB());
+		acceleration_structure.chunk_blocks.push_back(InstanceBlock());
+		acceleration_structure.chunk_visibility.push_back(true);
+		//for (int i = 0; i < BigBlocks; i++) {
+		for (InstanceData &instance : BigInstances) {
+
+			AABB *BlockAAbb = &acceleration_structure.chunk_aabb.back();
+			InstanceBlock *Block = &acceleration_structure.chunk_blocks.back();
+			if (Block->fill == instance_block_size - 1) {
+
+				acceleration_structure.chunk_aabb.push_back(instance.aabb);
+				acceleration_structure.chunk_blocks.push_back(InstanceBlock());
+				acceleration_structure.chunk_visibility.push_back(true);
+
+				BlockAAbb = &acceleration_structure.chunk_aabb.back();
+				Block = &acceleration_structure.chunk_blocks.back();
+				Block->fill = 0;
+			}
+
+			//if (i < total_instances) {
+			AABB &InstanceAABB = instance.aabb;
+			Instance *InstancePtr = instance.inst;
+			uint32_t mask = instance.mask;
+			
+				Block->bounding_boxes[Block->fill] = InstanceAABB;
+				Block->instance_pointers[Block->fill] = InstancePtr;
+				Block->masks[Block->fill] = mask;
+				Block->fill++;
+				BlockAAbb->merge_with(InstanceAABB);
+			
 		}
 	}
 }
+
 int VisualServerScene::entity_cull(const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t msk /*= 0xFFFFFFFF*/) {
 
 	//p_scenario->octree.cull_convex(p_convex, p_result_array, MAX_INSTANCE_CULL, mask);
@@ -392,7 +449,7 @@ int VisualServerScene::entity_cull(const Vector<Plane> &p_convex, Instance **p_r
 	{
 		std::vector<size_t> indices(acceleration_structure.chunk_aabb.size());
 		std::iota(indices.begin(), indices.end(), 0);
-		
+
 		{
 			SCOPE_PROFILE(PreCull);
 			std::for_each(std::execution::par,indices.begin(), indices.end(), [&](size_t b) {
@@ -411,27 +468,28 @@ int VisualServerScene::entity_cull(const Vector<Plane> &p_convex, Instance **p_r
 				}
 			});
 		}
-		
+
 		{
 			SCOPE_PROFILE(PostCull);
 			int count = 0;
 			p_result_array[0] = nullptr;
+			int blocks = 0;
 			for (int b = 0; b < acceleration_structure.chunk_aabb.size(); b++) {
-				
+
 				if (acceleration_structure.chunk_visibility[b]) {
+					blocks++;
 					InstanceBlock &block = acceleration_structure.chunk_blocks[b];
 					for (auto i = 0; i < block.fill; i++) {
-						
 
-						
-						if (block.visible[i]) {
-							
+						if (block.visible[i] && block.instance_pointers[i] != nullptr) {
+
 							p_result_array[count] = block.instance_pointers[i];
-							count++;							
+							count++;
 						}
 					}
 				}
 			}
+			//printf("rendered a total of %i out of %i blocks \n", blocks,(int)acceleration_structure.chunk_aabb.size());
 
 			return count;
 		}
