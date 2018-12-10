@@ -303,12 +303,12 @@ void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_upda
 	if (p_update_materials)
 		p_instance->update_materials = true;
 
-	if (p_instance->update_item.in_list())
-		return;
-
 	auto &reg = entity_registry;
 
 	reg.assign_or_replace<Dirty>(p_instance->entity_id);
+
+	if (p_instance->update_item.in_list())
+		return;
 
 	_instance_update_list.add(&p_instance->update_item);
 }
