@@ -42,7 +42,7 @@
 #include "servers/arvr/arvr_interface.h"
 #include "thirdparty/entt/entt.hpp"
 #include <array>
-
+class FalseOctree;
 class VisualServerScene {
 public:
 	enum {
@@ -133,6 +133,7 @@ public:
 		// well wtf, balloon allocator is slower?
 
 		Octree<Instance, true> octree;
+		FalseOctree *octree_false;
 
 		List<Instance *> directional_lights;
 		RID environment;
@@ -142,7 +143,8 @@ public:
 
 		SelfList<Instance>::List instances;
 
-		Scenario() { debug = VS::SCENARIO_DEBUG_DISABLED; }
+		Scenario();
+		~Scenario();
 	};
 
 	mutable RID_Owner<Scenario> scenario_owner;
@@ -163,7 +165,10 @@ public:
 
 		virtual ~InstanceBaseData() {}
 	};
-
+	struct BlockLocation {
+		uint32_t block_id;
+		uint16_t idx;
+	};
 	struct Instance : RasterizerScene::InstanceBase {
 
 		RID self;
@@ -173,6 +178,7 @@ public:
 		Scenario *scenario;
 		SelfList<Instance> scenario_item;
 		uint32_t entity_id;
+		BlockLocation bloc;
 		//aabb stuff
 		bool update_aabb;
 		bool update_materials;
@@ -480,17 +486,16 @@ public:
 				masks[i] = Other.masks[i];
 				bounding_boxes[i] = Other.bounding_boxes[i];
 			}
-		
+
 			fill = Other.fill;
 		}
-		InstanceBlock &operator=(InstanceBlock && Other)
-		{
+		InstanceBlock &operator=(InstanceBlock &&Other) {
 			for (int i = 0; i < Other.fill; i++) {
 				instance_pointers[i] = Other.instance_pointers[i];
 				masks[i] = Other.masks[i];
 				bounding_boxes[i] = Other.bounding_boxes[i];
 			}
-		
+
 			fill = Other.fill;
 			return *this;
 		}
@@ -500,7 +505,7 @@ public:
 				masks[i] = Other.masks[i];
 				bounding_boxes[i] = Other.bounding_boxes[i];
 			}
-		
+
 			fill = Other.fill;
 			return *this;
 		}
@@ -527,9 +532,9 @@ public:
 		}
 	};
 	AccelStructure acceleration_structure;
-	void build_accel_structure();
+	
 
-	int entity_cull(const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t mask = 0xFFFFFFFF);
+	int entity_cull(Scenario *p_scenario, const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t mask = 0xFFFFFFFF);
 
 	// from can be mesh, light,  area and portal so far.
 	virtual RID instance_create(); // from can be mesh, light, poly, area and portal so far.

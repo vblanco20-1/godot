@@ -34,11 +34,233 @@
 
 #include "main/profiler.h"
 #include "thirdparty/libmorton/morton.h"
+#include "thirdparty/sparsepp/spp.h"
 #include "visual_server_raster.h"
 #include <algorithm>
 #include <execution>
 #include <vector>
 /* CAMERA API */
+struct IntVector {
+	int32_t X;
+	int32_t Y;
+	int32_t Z;
+	bool operator==(const IntVector &other) const {
+		return X == other.X && Y == other.Y && Z == other.Z;
+	};
+};
+namespace std {
+template <>
+struct hash<IntVector> {
+	size_t operator()(const IntVector &vec) const {
+		uint32_t x = vec.X;
+		uint32_t y = vec.Y;
+		uint32_t z = vec.Z;
+		auto has = std::hash<uint32_t>();
+		return has(x) ^ has(y) ^ has(z);
+	}
+};
+} // namespace std
+
+class FalseOctree {
+public:
+	const float GRID_SIZE = 128;
+
+	IntVector grid_from_location(Vector3 loc) {
+		int32_t x = loc.x / GRID_SIZE;
+		int32_t y = loc.y / GRID_SIZE;
+		int32_t z = loc.z / GRID_SIZE;
+		return IntVector{ x, y, z };
+	}
+	static const size_t instance_block_size = 128;
+	struct InstanceBlock {
+		std::array<AABB, instance_block_size> bounding_boxes;
+		std::array<VisualServerScene::Instance *, instance_block_size> instance_pointers;
+		std::array<uint32_t, instance_block_size> masks;
+		std::array<bool, instance_block_size> visible;
+		bool bNeedsRebuild;
+		uint8_t fill;
+		bool is_full() {
+			return fill >= instance_block_size;
+		};
+		void erase_item(uint32_t index) {
+			fill--;
+			bounding_boxes[index] = bounding_boxes[fill];
+			instance_pointers[index] = instance_pointers[fill];
+			masks[index] = masks[fill];
+			visible[index] = visible[fill];
+			instance_pointers[index]->bloc.idx = index;
+			bNeedsRebuild = true;
+		}
+		void insert_item(const AABB &aabb, VisualServerScene::Instance *inst, uint32_t mask, bool vis) {
+
+			bounding_boxes[fill] = aabb;
+			instance_pointers[fill] = inst;
+			masks[fill] = mask;
+			visible[fill] = vis;
+			inst->bloc.idx = fill;
+			fill++;
+		}
+		InstanceBlock() {
+			fill = 0;
+			bNeedsRebuild = false;
+		}
+		InstanceBlock(const InstanceBlock &Other) {
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+
+			fill = Other.fill;
+			bNeedsRebuild = true;
+		}
+		InstanceBlock &operator=(InstanceBlock &&Other) {
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+
+			fill = Other.fill;
+			return *this;
+		}
+		InstanceBlock &operator=(InstanceBlock &Other) {
+			for (int i = 0; i < Other.fill; i++) {
+				instance_pointers[i] = Other.instance_pointers[i];
+				masks[i] = Other.masks[i];
+				bounding_boxes[i] = Other.bounding_boxes[i];
+			}
+
+			fill = Other.fill;
+			return *this;
+		}
+	};
+	spp::sparse_hash_map<IntVector, std::vector<uint32_t> > HashedBlocks;
+
+	std::vector<InstanceBlock> Blocks;
+	std::vector<AABB> BlockAABBs;
+
+	entt::registry<uint32_t> BlockRegistry;
+
+	uint32_t find_free_block_for(VisualServerScene::Instance *instance) {
+		IntVector gridloc = grid_from_location(instance->aabb.position);
+
+		auto search = HashedBlocks.find(gridloc);
+		if (search != HashedBlocks.end()) {
+			std::vector<uint32_t> &blockvec = HashedBlocks[gridloc];
+			//find a nonfull block to insert
+			for (int i = blockvec.size() - 1; i >= 0; i--) {
+				uint32_t blockid = blockvec[i];
+				if (BlockRegistry.valid(blockid)) {
+					InstanceBlock &block = BlockRegistry.get<InstanceBlock>(blockid);
+					if (!block.is_full()) {
+						return blockid;
+						//block.insert_item(instance->aabb,instance,instance->layer_mask);
+					}
+				} else {
+					//blockvec[i] = blockvec[blockvec.size()-1];
+					//blockvec.pop_back();
+				}
+			}
+			for (uint32_t blockid : blockvec) {
+			}
+			return create_block(instance->aabb);
+
+		} else {
+			return create_block(instance->aabb);
+		}
+	};
+	uint32_t create_block(const AABB &initialAABB) {
+		IntVector gridloc = grid_from_location(initialAABB.position);
+		uint32_t entityBlock = BlockRegistry.create();
+		BlockRegistry.assign<InstanceBlock>(entityBlock);
+		BlockRegistry.assign<AABB>(entityBlock, initialAABB);
+
+		//search for the mapping
+		auto search = HashedBlocks.find(gridloc);
+		if (search != HashedBlocks.end()) {
+			HashedBlocks[gridloc].push_back(entityBlock);
+		} else {
+			std::vector<uint32_t> blockvec;
+			blockvec.push_back(entityBlock);
+			HashedBlocks[gridloc] = blockvec;
+		}
+
+		return entityBlock;
+	};
+
+	void insert_element(VisualServerScene::Instance *instance, uint32_t mask) {
+		uint32_t blockid = find_free_block_for(instance);
+		InstanceBlock &block = BlockRegistry.get<InstanceBlock>(blockid);
+		AABB &blockAABB = BlockRegistry.get<AABB>(blockid);
+		const AABB &aabb = instance->aabb;
+
+		block.insert_item(aabb, instance, mask, instance->visible);
+		instance->bloc.block_id = blockid;
+		//if the new element grows the aabb, grow it
+		//if (!blockAABB.encloses(aabb)) {
+			blockAABB.merge_with(aabb);
+		//}
+	};
+	void insert_element(VisualServerScene::Instance *instance, uint32_t mask,AABB& newAABB) {
+		uint32_t blockid = find_free_block_for(instance);
+		InstanceBlock &block = BlockRegistry.get<InstanceBlock>(blockid);
+		AABB &blockAABB = BlockRegistry.get<AABB>(blockid);
+		const AABB &aabb = newAABB;
+
+		block.insert_item(aabb, instance, mask, instance->visible);
+		instance->bloc.block_id = blockid;
+		//if the new element grows the aabb, grow it
+		//if (!blockAABB.encloses(aabb)) {
+		blockAABB.merge_with(aabb);
+		//}
+	};
+
+	void remove_element(VisualServerScene::Instance *instance) {
+		uint32_t blockid = instance->bloc.block_id;
+		uint32_t idx = instance->bloc.idx;
+
+		InstanceBlock &block = BlockRegistry.get<InstanceBlock>(blockid);
+		block.erase_item(idx);
+		if (block.fill == 0) {
+			BlockRegistry.destroy(blockid);
+		}
+
+		instance->bloc.idx = -1;
+	};
+
+	void move(VisualServerScene::Instance *instance, AABB &newAABB) {
+
+		auto mask = BlockRegistry.get<InstanceBlock>(instance->bloc.block_id).masks[instance->bloc.idx];
+
+		remove_element(instance);
+		insert_element(instance, mask,newAABB);
+	};
+
+	int cull_convex(const Vector<Plane> &p_convex, VisualServerScene::Instance **p_result_array, uint32_t mask = 0xFFFFFFFF) {
+
+		int result = 0;
+		auto blockview = BlockRegistry.view<AABB>();
+		for (auto blockid : blockview) {
+			AABB &blockaabb = blockview.get(blockid);
+			if (blockaabb.intersects_convex_shape(p_convex.ptr(), p_convex.size())) {
+				InstanceBlock &block = BlockRegistry.get<InstanceBlock>(blockid);
+
+				for (auto i = 0; i < block.fill; i++) {
+					AABB &instanceAABB = block.bounding_boxes[i];
+
+					uint32_t mk = (block.masks[i] & mask);
+					block.visible[i] = (/*mk > 0 && */instanceAABB.intersects_convex_shape(p_convex.ptr(), p_convex.size()));
+					if (block.visible[i]) {
+						p_result_array[result] = block.instance_pointers[i];
+						result++;
+					}
+				}
+			}
+		}
+		return result;
+	}
+};
 
 RID VisualServerScene::camera_create() {
 
@@ -313,211 +535,12 @@ void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_upda
 	_instance_update_list.add(&p_instance->update_item);
 }
 
-void VisualServerScene::build_accel_structure() {
-
-	SCOPE_PROFILE(Refresh_AccelerationStructure);
-
-	auto view = entity_registry.persistent_view<InstanceAABB, ComponentInstance>();
-	int total_instances = view.size();
-	int total_blocks = (total_instances / instance_block_size)+1;
-
-	acceleration_structure.chunk_aabb.clear();
-	acceleration_structure.chunk_aabb.reserve(total_blocks+5);
-	acceleration_structure.chunk_blocks.clear();
-	acceleration_structure.chunk_blocks.reserve(total_blocks + 5);
-	acceleration_structure.chunk_visibility.clear();
-	acceleration_structure.chunk_visibility.reserve(total_blocks + 5);
-
-	std::vector<InstanceData> Instances;
-	Instances.reserve(total_instances);
-
-	{
-		SCOPE_PROFILE(Refresh_InitialFill);
-		for (auto entity : view) {
-
-			InstanceAABB &aabb = view.get<InstanceAABB>(entity);
-			ComponentInstance &inst = view.get<ComponentInstance>(entity);
-
-			InstanceData newdata;
-			newdata.aabb = aabb.aabb;
-			newdata.mask = aabb.mask;
-			newdata.inst = inst.inst;
-
-			auto pos = aabb.aabb.get_position();
-			uint32_t x = uint32_t(pos.x + INT16_MIN);
-			uint32_t y = uint32_t(pos.y + INT16_MIN);
-			uint32_t z = uint32_t(pos.z + INT16_MIN);
-			newdata.morton = morton3D_64_encode(x, y, z);
-			Instances.push_back(newdata);
-		}
-	}
-	SCOPE_PROFILE(Refresh_Sort);
-	{
-		std::sort(std::execution::par,Instances.begin(), Instances.end(), [](InstanceData &a, InstanceData &b) {
-			return a.morton < b.morton;
-		});
-	}
-	SCOPE_PROFILE(Refresh_Blocks) {
-
-		std::vector<InstanceData> BigInstances;
-
-		
-		BigInstances.reserve(200);
-		acceleration_structure.chunk_aabb.push_back(Instances[0].aabb);
-		acceleration_structure.chunk_blocks.push_back(InstanceBlock());
-		acceleration_structure.chunk_visibility.push_back(true);
-		bool bGenerateChunk = true;
-		//for (int b = 0; b < total_blocks; b++) {
-		for (InstanceData &instance : Instances) {
-
-			AABB *BlockAAbb = &acceleration_structure.chunk_aabb.back();
-			InstanceBlock*Block = &acceleration_structure.chunk_blocks.back();
-			if (Block->fill == instance_block_size - 1) {
-
-				acceleration_structure.chunk_aabb.push_back(instance.aabb);
-				acceleration_structure.chunk_blocks.push_back(InstanceBlock());
-				acceleration_structure.chunk_visibility.push_back(true);
-
-				BlockAAbb = &acceleration_structure.chunk_aabb.back();
-				Block = &acceleration_structure.chunk_blocks.back();
-				Block->fill = 0;
-			}
-
-			//if (i < total_instances) {
-			AABB &InstanceAABB = instance.aabb;
-			Instance *InstancePtr = instance.inst;
-			uint32_t mask = instance.mask;
-			if (InstanceAABB.get_longest_axis_size() > 10) {
-
-				BigInstances.push_back(instance);
-
-			} else {
-				Block->bounding_boxes[Block->fill] = InstanceAABB;
-				Block->instance_pointers[Block->fill] = InstancePtr;
-				Block->masks[Block->fill] = mask;
-				Block->fill++;
-				BlockAAbb->merge_with(InstanceAABB);
-			}
-		}
-
-		size_t BigBlocks = Instances.size() / instance_block_size;
-		size_t numBig = Instances.size();
-		size_t numBlocks = acceleration_structure.chunk_aabb.size() + BigBlocks;
-		//acceleration_structure.chunk_aabb.reserve(numBlocks);
-		//acceleration_structure.chunk_blocks.reserve(numBlocks);
-		//acceleration_structure.chunk_visibility.reserve(numBlocks);
-
-		acceleration_structure.chunk_aabb.push_back(AABB());
-		acceleration_structure.chunk_blocks.push_back(InstanceBlock());
-		acceleration_structure.chunk_visibility.push_back(true);
-		//for (int i = 0; i < BigBlocks; i++) {
-		for (InstanceData &instance : BigInstances) {
-
-			AABB *BlockAAbb = &acceleration_structure.chunk_aabb.back();
-			InstanceBlock *Block = &acceleration_structure.chunk_blocks.back();
-			if (Block->fill == instance_block_size - 1) {
-
-				acceleration_structure.chunk_aabb.push_back(instance.aabb);
-				acceleration_structure.chunk_blocks.push_back(InstanceBlock());
-				acceleration_structure.chunk_visibility.push_back(true);
-
-				BlockAAbb = &acceleration_structure.chunk_aabb.back();
-				Block = &acceleration_structure.chunk_blocks.back();
-				Block->fill = 0;
-			}
-
-			//if (i < total_instances) {
-			AABB &InstanceAABB = instance.aabb;
-			Instance *InstancePtr = instance.inst;
-			uint32_t mask = instance.mask;
-			
-				Block->bounding_boxes[Block->fill] = InstanceAABB;
-				Block->instance_pointers[Block->fill] = InstancePtr;
-				Block->masks[Block->fill] = mask;
-				Block->fill++;
-				BlockAAbb->merge_with(InstanceAABB);
-			
-		}
-	}
-}
-
-int VisualServerScene::entity_cull(const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t msk /*= 0xFFFFFFFF*/) {
-
-	//p_scenario->octree.cull_convex(p_convex, p_result_array, MAX_INSTANCE_CULL, mask);
+int VisualServerScene::entity_cull(Scenario* p_scenario,const Vector<Plane> &p_convex, Instance **p_result_array, uint32_t msk /*= 0xFFFFFFFF*/) {
 
 	SCOPE_PROFILE(Entity_Cull);
-	{
-		std::vector<size_t> indices(acceleration_structure.chunk_aabb.size());
-		std::iota(indices.begin(), indices.end(), 0);
-
-		{
-			SCOPE_PROFILE(PreCull);
-			std::for_each(std::execution::par,indices.begin(), indices.end(), [&](size_t b) {
-				AABB &aabb = acceleration_structure.chunk_aabb[b];
-				if (aabb.intersects_convex_shape(p_convex.ptr(), p_convex.size())) {
-					acceleration_structure.chunk_visibility[b] = true;
-					InstanceBlock &block = acceleration_structure.chunk_blocks[b];
-					for (auto i = 0; i < block.fill; i++) {
-						AABB &instanceAABB = block.bounding_boxes[i];
-
-						uint32_t mk = (block.masks[i] & msk);
-						block.visible[i] = (mk > 0 && instanceAABB.intersects_convex_shape(p_convex.ptr(), p_convex.size()));
-					}
-				} else {
-					acceleration_structure.chunk_visibility[b] = false;
-				}
-			});
-		}
-
-		{
-			SCOPE_PROFILE(PostCull);
-			int count = 0;
-			p_result_array[0] = nullptr;
-			int blocks = 0;
-			for (int b = 0; b < acceleration_structure.chunk_aabb.size(); b++) {
-
-				if (acceleration_structure.chunk_visibility[b]) {
-					blocks++;
-					InstanceBlock &block = acceleration_structure.chunk_blocks[b];
-					for (auto i = 0; i < block.fill; i++) {
-
-						if (block.visible[i] && block.instance_pointers[i] != nullptr) {
-
-							p_result_array[count] = block.instance_pointers[i];
-							count++;
-						}
-					}
-				}
-			}
-			//printf("rendered a total of %i out of %i blocks \n", blocks,(int)acceleration_structure.chunk_aabb.size());
-
-			return count;
-		}
-
-		//int count = 0;
-		//p_result_array[0] = nullptr;
-		//for (int b = 0; b < acceleration_structure.chunk_aabb.size(); b++) {
-		//	AABB &aabb = acceleration_structure.chunk_aabb[b];
-		//	if (aabb.intersects_convex_shape(p_convex.ptr(), p_convex.size())) {
-		//		InstanceBlock &block = acceleration_structure.chunk_blocks[b];
-		//		for (auto i = 0; i < block.fill; i++) {
-		//			AABB &instanceAABB = block.bounding_boxes[i];
-		//
-		//			uint32_t mk = (block.masks[i] & msk);
-		//			if (mk > 0 && instanceAABB.intersects_convex_shape(p_convex.ptr(), p_convex.size())) {
-		//
-		//				if (block.instance_pointers[i] != nullptr) // && entity_registry.valid( block.instance_pointers[i]->entity_id))
-		//				{
-		//					p_result_array[count] = block.instance_pointers[i];
-		//					count++;
-		//				}
-		//			}
-		//		}
-		//	}
-		//}
-		//
-		//return count;
-	}
+	//Scenario *scenario = scenario_owner.get(p_scenario);
+	return p_scenario->octree_false->cull_convex(p_convex, p_result_array, msk);
+	
 }
 
 // from can be mesh, light,  area and portal so far.
@@ -565,6 +588,7 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 		if (scenario && instance->octree_id) {
 			scenario->octree.erase(instance->octree_id); //make dependencies generated by the octree go away
+			scenario->octree_false->remove_element(instance);
 			instance->octree_id = 0;
 		}
 
@@ -714,6 +738,7 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 		instance->scenario->instances.remove(&instance->scenario_item);
 
 		if (instance->octree_id) {
+			instance->scenario->octree_false->remove_element(instance);
 			instance->scenario->octree.erase(instance->octree_id); //make dependencies generated by the octree go away
 			instance->octree_id = 0;
 		}
@@ -1174,6 +1199,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		// not inside octree
 		p_instance->octree_id = p_instance->scenario->octree.create(p_instance, new_aabb, 0, pairable, base_type, pairable_mask);
+		p_instance->scenario->octree_false->insert_element(p_instance, pairable_mask);
 
 	} else {
 		//SCOPE_PROFILE(VisualServer_UpdateOctree);
@@ -1181,8 +1207,8 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		if (new_aabb==p_instance->data.transformed_aabb)
 			return;
 		*/
+		p_instance->scenario->octree_false->move(p_instance, new_aabb);
 
-		p_instance->scenario->octree.move(p_instance->octree_id, new_aabb);
 		//entity_registry.get<InstanceAABB>(p_instance->entity_id).aabb = new_aabb;
 	}
 
@@ -1206,7 +1232,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	// not inside octree
 	entity_registry.assign_or_replace<InstanceAABB>(p_instance->entity_id, new_aabb, btype);
-
+	p_instance->scenario->octree_false->move(p_instance, new_aabb);
 	p_instance->aabb = new_aabb;
 }
 
@@ -1547,7 +1573,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				Vector<Plane> planes = p_cam_projection.get_projection_planes(p_cam_transform);
 				int cull_count = 0;
 				cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-				cull_count = entity_cull(planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
+				cull_count = entity_cull(p_scenario,planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
 
 				Plane base(p_cam_transform.origin, -p_cam_transform.basis.get_axis(2));
 				//check distance max and min
@@ -1747,7 +1773,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				light_frustum_planes.write[5] = Plane(-z_vec, -z_min); // z_min is ok, since casters further than far-light plane are not needed
 				int cull_count = 0;
 				cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-				cull_count = entity_cull(light_frustum_planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
+				cull_count = entity_cull(p_scenario,light_frustum_planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
 
 				// a pre pass will need to be needed to determine the actual z-near to be used
 
@@ -1814,7 +1840,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 						int cull_count = 0;
 						cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-						cull_count = entity_cull(planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
+						cull_count = entity_cull(p_scenario,planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
 						Plane near_plane(light_transform.origin, light_transform.basis.get_axis(2) * z);
 
 						for (int j = 0; j < cull_count; j++) {
@@ -1870,7 +1896,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						Vector<Plane> planes = cm.get_projection_planes(xform);
 						int cull_count = 0;
 						cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-						cull_count = entity_cull(planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
+						cull_count = entity_cull(p_scenario,planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
 						Plane near_plane(xform.origin, -xform.basis.get_axis(2));
 						for (int j = 0; j < cull_count; j++) {
 
@@ -1910,7 +1936,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			Vector<Plane> planes = cm.get_projection_planes(light_transform);
 			int cull_count = 0;
 			cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-			cull_count = entity_cull(planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
+			cull_count = entity_cull(p_scenario,planes, instance_shadow_cull_result, VS::INSTANCE_GEOMETRY_MASK);
 			Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
 			for (int j = 0; j < cull_count; j++) {
 
@@ -2080,13 +2106,13 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	Plane near_plane(p_cam_transform.origin, -p_cam_transform.basis.get_axis(2).normalized());
 	float z_far = p_cam_projection.get_z_far();
 
-	build_accel_structure();
+	//build_accel_structure();
 
 	/* STEP 2 - CULL */
 	{
 		SCOPE_PROFILE(VisualServer_OctreeCull);
 		scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
-		instance_cull_count = entity_cull(planes, instance_cull_result); //
+		instance_cull_count = entity_cull(scenario,planes, instance_cull_result); //
 
 		//if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
 	}
@@ -3790,4 +3816,13 @@ VisualServerScene::~VisualServerScene() {
 	memdelete(probe_bake_mutex);
 
 #endif
+}
+
+VisualServerScene::Scenario::Scenario() {
+	octree_false = new FalseOctree();
+	debug = VS::SCENARIO_DEBUG_DISABLED;
+}
+
+VisualServerScene::Scenario::~Scenario() {
+	delete octree_false;
 }
