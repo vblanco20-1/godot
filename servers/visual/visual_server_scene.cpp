@@ -33,6 +33,9 @@
 #include "visual_server_global.h"
 #include "visual_server_raster.h"
 #include "core/ecs_registry.h"
+#include "main/profiler.h"
+#include "thirdparty/concurrentqueue/blockingconcurrentqueue.h"
+#include <vector>
 /* CAMERA API */
 
 struct InstanceComponent {
@@ -67,6 +70,45 @@ struct GeometryComponent {
 		gi_probes_dirty = true;
 	}
 };
+
+struct ShadowWorkItem {
+	//shadowtransform
+	bool bUpdateTransform{false};
+	RID tf_p_light_instance;
+	CameraMatrix tf_p_projection;
+	Transform tf_p_transform;
+	float tf_p_far;
+	float tf_p_split;
+	int tf_p_pass;
+	float tf_p_bias_scale;
+	//render
+	bool bRender{false};
+	RID r_p_light;
+	RID r_p_shadow_atlas;
+	int r_p_pass;
+	std::vector<RasterizerScene::InstanceBase*> r_cullresult;
+
+	void light_instance_set_shadow_transform(RID p_light_instance, const CameraMatrix &p_projection, const Transform &p_transform, float p_far, float p_split, int p_pass, float p_bias_scale = 1.0) {
+		bUpdateTransform = true;
+		tf_p_light_instance = p_light_instance;
+		tf_p_projection = p_projection;
+		tf_p_transform = p_transform;
+		tf_p_far = p_far;
+		tf_p_split = p_split;
+		tf_p_pass = p_pass;
+		tf_p_bias_scale = p_bias_scale;
+	}
+
+	void render_shadow(RID p_light, RID p_shadow_atlas, int p_pass, std::vector<RasterizerScene::InstanceBase*> &cullresult) {
+		bRender = true;
+		r_p_light = p_light;
+		r_p_shadow_atlas = p_shadow_atlas;
+		r_p_pass = p_pass;
+		r_cullresult = std::move(cullresult);
+	}
+	
+};
+static moodycamel::BlockingConcurrentQueue<ShadowWorkItem> ShadowWorkQueue;
 
 VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
 
@@ -1403,6 +1445,8 @@ void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance)
 
 bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_shadow_atlas, Scenario *p_scenario) {
 
+	SCOPE_PROFILE(update_shadow);
+
 	InstanceLightData *light = static_cast<InstanceLightData *>(p_instance->base_data);
 
 	Transform light_transform = p_instance->transform;
@@ -1410,6 +1454,8 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 	bool animated_material_found = false;
 
+	int cull_count = 0;
+	
 	switch (VSG::storage->light_get_type(p_instance->base)) {
 
 		case VS::LIGHT_DIRECTIONAL: {
@@ -1427,39 +1473,45 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			if (depth_range_mode == VS::LIGHT_DIRECTIONAL_SHADOW_DEPTH_RANGE_OPTIMIZED) {
 				//optimize min/max
 				Vector<Plane> planes = p_cam_projection.get_projection_planes(p_cam_transform);
-				int cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
+				int cull_count = 0;// = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
 				Plane base(p_cam_transform.origin, -p_cam_transform.basis.get_axis(2));
-				//check distance max and min
+
+				
+				//int cull_count = 0;
 
 				bool found_items = false;
 				float z_max = -1e20;
 				float z_min = 1e20;
+				//std::vector<Instance*> CullResult;
+				//CullResult.reserve(1000);
+				p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
+					
+					const bool bIsVisible = instance->visible;
+					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
+					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+					
+					if (bIsVisible && bIsMesh && bIsShadowcaster) {	
 
-				for (int i = 0; i < cull_count; i++) {
+						if (get_component<GeometryComponent>(instance->self).material_is_animated) {
+							animated_material_found = true;
+						}
 
-					Instance *instance = instance_shadow_cull_result[i];
-					if (!instance->visible || !(has_component<GeometryComponent>(instance->self)) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-						continue;
+						float max, min;
+						instance->transformed_aabb.project_range_in_plane(base, min, max);
+						
+						z_max = MAX(z_max, max);
+
+						z_min = MIN(z_min, min);					
+
+						found_items = true;
+						//instance_shadow_cull_result[cull_count] = instance;
+						//CullResult.push_back(instance);
+						cull_count++;
 					}
+				}, VS::INSTANCE_GEOMETRY_MASK);
 
-					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
-						animated_material_found = true;
-					}
 
-					float max, min;
-					instance->transformed_aabb.project_range_in_plane(base, min, max);
-
-					if (max > z_max) {
-						z_max = max;
-					}
-
-					if (min < z_min) {
-						z_min = min;
-					}
-
-					found_items = true;
-				}
-
+				
 				if (found_items) {
 					min_distance = MAX(min_distance, z_min);
 					max_distance = MIN(max_distance, z_max);
@@ -1625,30 +1677,35 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				light_frustum_planes.write[4] = Plane(z_vec, z_max + 1e6);
 				light_frustum_planes.write[5] = Plane(-z_vec, -z_min); // z_min is ok, since casters further than far-light plane are not needed
 
-				int cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
+				std::vector<RasterizerScene::InstanceBase*> CullResult;
+				CullResult.reserve(1000);
 
+				int cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
+				Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
+				p_scenario->octree.cull_convex_lambda(light_frustum_planes, [&](Instance* instance) {
+
+					const bool bIsVisible = instance->visible;
+					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
+					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+
+					if (bIsVisible && bIsMesh && bIsShadowcaster) {
+
+						float min, max;
+						//Instance *instance = instance_shadow_cull_result[j];						
+
+						instance->transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
+						instance->depth = near_plane.distance_to(instance->transform.origin);
+						instance->depth_layer = 0;
+						if (max > z_max)
+							z_max = max;
+						CullResult.push_back(instance);
+						//instance_shadow_cull_result[cull_count] = instance;
+						cull_count++;
+					}
+				}, VS::INSTANCE_GEOMETRY_MASK);
 				// a pre pass will need to be needed to determine the actual z-near to be used
 
-				Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
-
-				for (int j = 0; j < cull_count; j++) {
-
-					float min, max;
-					Instance *instance = instance_shadow_cull_result[j];
-					if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-						cull_count--;
-						SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
-						j--;
-						continue;
-					}
-
-					instance->transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
-					instance->depth = near_plane.distance_to(instance->transform.origin);
-					instance->depth_layer = 0;
-					if (max > z_max)
-						z_max = max;
-				}
-
+				ShadowWorkItem WorkItem;
 				{
 
 					CameraMatrix ortho_camera;
@@ -1661,10 +1718,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 					ortho_transform.basis = transform.basis;
 					ortho_transform.origin = x_vec * (x_min_cam + half_x) + y_vec * (y_min_cam + half_y) + z_vec * z_max;
 
-					VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
+					WorkItem.light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
+					//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
 				}
-
-				VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+				WorkItem.render_shadow(light->instance, p_shadow_atlas, i,CullResult);
+				ShadowWorkQueue.enqueue(WorkItem);
+				//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
 			}
 
 		} break;
@@ -1690,28 +1749,35 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						planes.write[3] = light_transform.xform(Plane(Vector3(0, 1, z).normalized(), radius));
 						planes.write[4] = light_transform.xform(Plane(Vector3(0, -1, z).normalized(), radius));
 
-						int cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
 						Plane near_plane(light_transform.origin, light_transform.basis.get_axis(2) * z);
-
-						for (int j = 0; j < cull_count; j++) {
-
-							Instance *instance = instance_shadow_cull_result[j];
+						std::vector<RasterizerScene::InstanceBase*> CullResult;
+						CullResult.reserve(1000);
+						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
 							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-								cull_count--;
-								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
-								j--;
-							} else {
+
+							}
+							else {
 								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
-
 								instance->depth = near_plane.distance_to(instance->transform.origin);
 								instance->depth_layer = 0;
-							}
-						}
 
-						VSG::scene_render->light_instance_set_shadow_transform(light->instance, CameraMatrix(), light_transform, radius, 0, i);
-						VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+								//instance_shadow_cull_result[cull_count] = instance;
+								CullResult.push_back(instance);
+								//instance_shadow_cull_result[cull_count] = instance;
+								cull_count++;
+							}
+						}, VS::INSTANCE_GEOMETRY_MASK);
+
+						ShadowWorkItem WorkItem;
+						WorkItem.light_instance_set_shadow_transform(light->instance, CameraMatrix(), light_transform, radius, 0, i);
+						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
+					
+						WorkItem.render_shadow(light->instance, p_shadow_atlas, i, CullResult);
+						ShadowWorkQueue.enqueue(WorkItem);
+						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, CameraMatrix(), light_transform, radius, 0, i);
+						//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
 					}
 				} break;
 				case VS::LIGHT_OMNI_SHADOW_CUBE: {
@@ -1744,32 +1810,46 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						Transform xform = light_transform * Transform().looking_at(view_normals[i], view_up[i]);
 
 						Vector<Plane> planes = cm.get_projection_planes(xform);
-
-						int cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-
 						Plane near_plane(xform.origin, -xform.basis.get_axis(2));
-						for (int j = 0; j < cull_count; j++) {
-
-							Instance *instance = instance_shadow_cull_result[j];
+						std::vector<RasterizerScene::InstanceBase*> CullResult;
+						CullResult.reserve(1000);
+						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
 							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-								cull_count--;
-								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
-								j--;
-							} else {
+
+							}
+							else {
 								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
 								instance->depth = near_plane.distance_to(instance->transform.origin);
 								instance->depth_layer = 0;
+								CullResult.push_back(instance);
+								//instance_shadow_cull_result[cull_count] = instance;
+								cull_count++;
 							}
-						}
+						}, VS::INSTANCE_GEOMETRY_MASK);
+						
 
-						VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, xform, radius, 0, i);
-						VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, xform, radius, 0, i);
+						//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+
+						ShadowWorkItem WorkItem;
+						WorkItem.light_instance_set_shadow_transform(light->instance, cm, xform, radius, 0, i);
+						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
+
+						WorkItem.render_shadow(light->instance, p_shadow_atlas, i,  CullResult);
+						ShadowWorkQueue.enqueue(WorkItem);
+
 					}
 
 					//restore the regular DP matrix
 					VSG::scene_render->light_instance_set_shadow_transform(light->instance, CameraMatrix(), light_transform, radius, 0, 0);
+					ShadowWorkItem WorkItem;
+					WorkItem.light_instance_set_shadow_transform(light->instance, CameraMatrix(), light_transform, radius, 0, 0);
+					//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
+
+					//WorkItem.render_shadow(light->instance, p_shadow_atlas, i, CullResult);
+					ShadowWorkQueue.enqueue(WorkItem);
 
 				} break;
 			}
@@ -1784,28 +1864,37 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			cm.set_perspective(angle * 2.0, 1.0, 0.01, radius);
 
 			Vector<Plane> planes = cm.get_projection_planes(light_transform);
-			int cull_count = p_scenario->octree.cull_convex(planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
-
 			Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
-			for (int j = 0; j < cull_count; j++) {
-
-				Instance *instance = instance_shadow_cull_result[j];
+			//int cull_count = 0;
+			std::vector<RasterizerScene::InstanceBase*> CullResult;
+			CullResult.reserve(1000);
+			p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
 				if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-					cull_count--;
-					SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
-					j--;
-				} else {
+					
+				}
+				else {
 					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 						animated_material_found = true;
 					}
 					instance->depth = near_plane.distance_to(instance->transform.origin);
 					instance->depth_layer = 0;
+
+					//instance_shadow_cull_result[cull_count]=instance;
+					instance_shadow_cull_result[cull_count] = instance;
+					CullResult.push_back(instance);
+					cull_count++;
 				}
-			}
+			},VS::INSTANCE_GEOMETRY_MASK);
+			
 
-			VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, light_transform, radius, 0, 0);
-			VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, 0, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+			//VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, light_transform, radius, 0, 0);
+			//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, 0, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
+			ShadowWorkItem WorkItem;
+			WorkItem.light_instance_set_shadow_transform(light->instance, cm, light_transform, radius, 0, 0);
+			//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
 
+			WorkItem.render_shadow(light->instance, p_shadow_atlas, 0, CullResult);
+			ShadowWorkQueue.enqueue(WorkItem);
 		} break;
 	}
 
@@ -1813,6 +1902,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 }
 
 void VisualServerScene::render_camera(RID p_camera, RID p_scenario, Size2 p_viewport_size, RID p_shadow_atlas) {
+	SCOPE_PROFILE(render_camera);
 // render to mono camera
 #ifndef _3D_DISABLED
 
@@ -1937,6 +2027,8 @@ void VisualServerScene::render_camera(Ref<ARVRInterface> &p_interface, ARVRInter
 };
 
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
+
+	SCOPE_PROFILE(prepare_scene);
 	// Note, in stereo rendering:
 	// - p_cam_transform will be a transform in the middle of our two eyes
 	// - p_cam_projection is a wider frustrum that encompasses both eyes
@@ -2163,6 +2255,19 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		}
 	}
 
+	ShadowWorkItem QItem;
+	while (ShadowWorkQueue.try_dequeue(QItem)) {
+
+		if (QItem.bUpdateTransform) {
+			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split,QItem.tf_p_pass,QItem.tf_p_bias_scale);
+
+		}
+		if (QItem.bRender) {
+			VSG::scene_render->render_shadow(QItem.r_p_light,QItem.r_p_shadow_atlas, QItem.r_p_pass,&QItem.r_cullresult[0],QItem.r_cullresult.size());
+		}
+
+	}
+
 	{ //setup shadow maps
 
 		//SortArray<Instance*,_InstanceLightsort> sorter;
@@ -2262,10 +2367,24 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			}
 		}
 	}
+
+
+
+	
+	while (ShadowWorkQueue.try_dequeue(QItem)) {
+
+		if (QItem.bUpdateTransform) {
+			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+
+		}
+		if (QItem.bRender) {
+			VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+		}
+	}
 }
 
 void VisualServerScene::_render_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-
+	SCOPE_PROFILE(render_scene);
 	Scenario *scenario = scenario_owner.getornull(p_scenario);
 
 	/* ENVIRONMENT */
@@ -3550,6 +3669,7 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 
 void VisualServerScene::update_dirty_instances() {
 
+	SCOPE_PROFILE(update_dirty_instances);
 	VSG::storage->update_dirty_resources();
 
 	auto view = VSG::ecs->registry.persistent_view<InstanceComponent, Dirty>();
@@ -3623,7 +3743,7 @@ VisualServerScene::VisualServerScene() {
 	probe_bake_thread = Thread::create(_gi_probe_bake_threads, this);
 	probe_bake_thread_exit = false;
 #endif
-
+	PROFILER_INIT();
 	render_pass = 1;
 	singleton = this;
 }

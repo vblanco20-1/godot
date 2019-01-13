@@ -58,6 +58,8 @@
 #include "main/splash_editor.gen.h"
 #include "main/tests/test_main.h"
 #include "main/timer_sync.h"
+#include "main/profiler.h"
+
 #include "modules/register_module_types.h"
 #include "platform/register_platform_apis.h"
 #include "scene/main/scene_tree.h"
@@ -79,7 +81,7 @@
 #endif
 
 /* Static members */
-
+Remotery* g_Remotery = nullptr;
 // Singletons
 
 // Initialized in setup()
@@ -1792,7 +1794,7 @@ static uint64_t physics_process_max = 0;
 static uint64_t idle_process_max = 0;
 
 bool Main::iteration() {
-
+	SCOPE_PROFILE(Main_Iteration);
 	uint64_t ticks = OS::get_singleton()->get_ticks_usec();
 	Engine::get_singleton()->_frame_ticks = ticks;
 	main_timer_sync.set_cpu_ticks_usec(ticks);

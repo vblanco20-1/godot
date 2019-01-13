@@ -380,6 +380,73 @@ public:
 	T *get(OctreeElementID p_id) const;
 	int get_subindex(OctreeElementID p_id) const;
 
+	template<typename F>
+	void cull_convex_lambda(const Vector<Plane> &p_convex, F && functor, uint32_t p_mask = 0xFFFFFFFF)
+	{
+		if (!root)
+			return ;
+		
+		pass++;
+		_CullConvexData cdata;
+		cdata.planes = &p_convex[0];
+		cdata.plane_count = p_convex.size();
+		cdata.result_array = nullptr;
+		cdata.result_max = 0;
+		cdata.result_idx = nullptr;
+		cdata.mask = p_mask;
+
+		_cull_convex_lambda(root,functor, &cdata);
+	}
+	template<typename F>
+	void _cull_convex_lambda(Octant *p_octant, F && functor,_CullConvexData *p_cull)
+	{
+		if (!p_octant->elements.empty()) {
+
+			typename List<Element *, AL>::Element *I;
+			I = p_octant->elements.front();
+
+			for (; I; I = I->next()) {
+
+				Element *e = I->get();
+
+				if (e->last_pass == pass || (use_pairs && !(e->pairable_type & p_cull->mask)))
+					continue;
+				e->last_pass = pass;
+
+				if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+
+					functor(e->userdata);
+				}
+			}
+		}
+
+		if (use_pairs && !p_octant->pairable_elements.empty()) {
+
+			typename List<Element *, AL>::Element *I;
+			I = p_octant->pairable_elements.front();
+
+			for (; I; I = I->next()) {
+
+				Element *e = I->get();
+
+				if (e->last_pass == pass || (use_pairs && !(e->pairable_type & p_cull->mask)))
+					continue;
+				e->last_pass = pass;
+
+				if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+
+					functor(e->userdata);
+				}
+			}
+		}
+
+		for (int i = 0; i < 8; i++) {
+
+			if (p_octant->children[i] && p_octant->children[i]->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+				_cull_convex_lambda(p_octant->children[i],functor, p_cull);
+			}
+		}
+	}
 	int cull_convex(const Vector<Plane> &p_convex, T **p_result_array, int p_result_max, uint32_t p_mask = 0xFFFFFFFF);
 	int cull_aabb(const AABB &p_aabb, T **p_result_array, int p_result_max, int *p_subindex_array = NULL, uint32_t p_mask = 0xFFFFFFFF);
 	int cull_segment(const Vector3 &p_from, const Vector3 &p_to, T **p_result_array, int p_result_max, int *p_subindex_array = NULL, uint32_t p_mask = 0xFFFFFFFF);
