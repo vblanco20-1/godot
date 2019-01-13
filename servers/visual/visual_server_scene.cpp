@@ -43,6 +43,29 @@ struct Dirty {
 };
 struct GeometryComponent {
 	VisualServerScene::InstanceGeometryData *Data;
+
+	bool lighting_dirty : 1;
+	bool can_cast_shadows : 1;
+	bool material_is_animated : 1;
+	bool reflection_dirty : 1;
+	bool gi_probes_dirty: 1;
+
+	GeometryComponent() {
+		Data = nullptr;
+		lighting_dirty = false;
+		reflection_dirty = true;
+		can_cast_shadows = true;
+		material_is_animated = true;
+		gi_probes_dirty = true;
+	}
+	GeometryComponent(VisualServerScene::InstanceGeometryData * _Data) {
+		Data = _Data;
+		lighting_dirty = false;
+		reflection_dirty = true;
+		can_cast_shadows = true;
+		material_is_animated = true;
+		gi_probes_dirty = true;
+	}
 };
 
 VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
@@ -55,6 +78,14 @@ VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
 template<typename T>
 bool has_component(RID id) {
 	return VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<T>(id.eid);
+}
+template<typename T>
+T & get_component(RID id) {
+
+	CRASH_COND(!VSG::ecs->registry.valid(id.eid) );
+	CRASH_COND(!VSG::ecs->registry.has<T>(id.eid) );
+	
+	return VSG::ecs->registry.get<T>(id.eid);
 }
 template<typename T>
 void clear_component(RID id) {
@@ -212,11 +243,11 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 
 		List<InstanceLightData::PairInfo>::Element *E = light->geometries.push_back(pinfo);
 
-		if (geom->can_cast_shadows) {
+		if (get_component<GeometryComponent>(A->self).can_cast_shadows) {
 
 			light->shadow_dirty = true;
 		}
-		geom->lighting_dirty = true;
+		get_component<GeometryComponent>(A->self).lighting_dirty = true;
 
 		return E; //this element should make freeing faster
 	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
@@ -230,7 +261,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 
 		List<InstanceReflectionProbeData::PairInfo>::Element *E = reflection_probe->geometries.push_back(pinfo);
 
-		geom->reflection_dirty = true;
+		get_component<GeometryComponent>(A->self).reflection_dirty = true;
 
 		return E; //this element should make freeing faster
 	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
@@ -257,7 +288,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 
 		List<InstanceGIProbeData::PairInfo>::Element *E = gi_probe->geometries.push_back(pinfo);
 
-		geom->gi_probes_dirty = true;
+		get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
 
 		return E; //this element should make freeing faster
 
@@ -290,10 +321,10 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		geom->lighting.erase(E->get().L);
 		light->geometries.erase(E);
 
-		if (geom->can_cast_shadows) {
+		if (get_component<GeometryComponent>(A->self).can_cast_shadows) {
 			light->shadow_dirty = true;
 		}
-		geom->lighting_dirty = true;
+		get_component<GeometryComponent>(A->self).lighting_dirty = true;
 
 	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
 
@@ -305,7 +336,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		geom->reflection_probes.erase(E->get().L);
 		reflection_probe->geometries.erase(E);
 
-		geom->reflection_dirty = true;
+		get_component<GeometryComponent>(A->self).reflection_dirty = true;
 	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
@@ -327,7 +358,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		geom->gi_probes.erase(E->get().L);
 		gi_probe->geometries.erase(E);
 
-		geom->gi_probes_dirty = true;
+		get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
 
 	} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
 
@@ -694,7 +725,7 @@ void VisualServerScene::instance_set_blend_shape_weight(RID p_instance, int p_sh
 	Instance *instance = instance_owner.get(p_instance);
 	ERR_FAIL_COND(!instance);
 
-	if (instance->update_item.in_list()) {
+	if (!has_component<Dirty>(p_instance)) {
 		_update_dirty_instance(instance);
 	}
 
@@ -1003,7 +1034,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		InstanceGeometryData *geom = get_instance_geometry(p_instance->self);//static_cast<InstanceGeometryData *>(p_instance->base_data);
 		//make sure lights are updated if it casts shadow
 
-		if (geom->can_cast_shadows) {
+		if (get_component<GeometryComponent>(p_instance->self).can_cast_shadows) {
 			for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
 				InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
 				light->shadow_dirty = true;
@@ -1407,11 +1438,11 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				for (int i = 0; i < cull_count; i++) {
 
 					Instance *instance = instance_shadow_cull_result[i];
-					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(p_instance->self)->can_cast_shadows) {
+					if (!instance->visible || !(has_component<GeometryComponent>(instance->self)) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
 						continue;
 					}
 
-					if (get_instance_geometry(p_instance->self)->material_is_animated) {
+					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 						animated_material_found = true;
 					}
 
@@ -1604,7 +1635,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 					float min, max;
 					Instance *instance = instance_shadow_cull_result[j];
-					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
+					if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
 						cull_count--;
 						SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 						j--;
@@ -1665,12 +1696,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						for (int j = 0; j < cull_count; j++) {
 
 							Instance *instance = instance_shadow_cull_result[j];
-							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
+							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
 								cull_count--;
 								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 								j--;
 							} else {
-								if (get_instance_geometry(instance->self)->material_is_animated) {
+								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
 
@@ -1720,12 +1751,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						for (int j = 0; j < cull_count; j++) {
 
 							Instance *instance = instance_shadow_cull_result[j];
-							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
+							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
 								cull_count--;
 								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 								j--;
 							} else {
-								if (get_instance_geometry(instance->self)->material_is_animated) {
+								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
 								instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -1759,12 +1790,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			for (int j = 0; j < cull_count; j++) {
 
 				Instance *instance = instance_shadow_cull_result[j];
-				if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
+				if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
 					cull_count--;
 					SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 					j--;
 				} else {
-					if (get_instance_geometry(instance->self)->material_is_animated) {
+					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 						animated_material_found = true;
 					}
 					instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -2006,7 +2037,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				gi_probe_update_list.add(&gi_probe->update_element);
 			}
 
-		} else if (((1 << ins->base_type) & VS::INSTANCE_GEOMETRY_MASK) && ins->visible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+		} else if (has_component<GeometryComponent>(ins->self) && ins->visible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+
+			//get_component<GeometryComponent>(ins->self).
 
 			keep = true;
 
@@ -2028,7 +2061,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 			}
 
-			if (geom->lighting_dirty) {
+			if (get_component<GeometryComponent>(ins->self).lighting_dirty) {
 				int l = 0;
 				//only called when lights AABB enter/exit this geometry
 				ins->light_instances.resize(geom->lighting.size());
@@ -2040,10 +2073,10 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					ins->light_instances.write[l++] = light->instance;
 				}
 
-				geom->lighting_dirty = false;
+				get_component<GeometryComponent>(ins->self).lighting_dirty = false;
 			}
 
-			if (geom->reflection_dirty) {
+			if (get_component<GeometryComponent>(ins->self).reflection_dirty) {
 				int l = 0;
 				//only called when reflection probe AABB enter/exit this geometry
 				ins->reflection_probe_instances.resize(geom->reflection_probes.size());
@@ -2055,10 +2088,10 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					ins->reflection_probe_instances.write[l++] = reflection_probe->instance;
 				}
 
-				geom->reflection_dirty = false;
+				get_component<GeometryComponent>(ins->self).reflection_dirty = false;
 			}
 
-			if (geom->gi_probes_dirty) {
+			if (get_component<GeometryComponent>(ins->self).gi_probes_dirty) {
 				int l = 0;
 				//only called when reflection probe AABB enter/exit this geometry
 				ins->gi_probe_instances.resize(geom->gi_probes.size());
@@ -2070,7 +2103,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					ins->gi_probe_instances.write[l++] = gi_probe->probe_instance;
 				}
 
-				geom->gi_probes_dirty = false;
+				get_component<GeometryComponent>(ins->self).gi_probes_dirty = false;
 			}
 
 			ins->depth = near_plane.distance_to(ins->transform.origin);
@@ -3368,10 +3401,10 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 			}
 		}
 
-		if ((1 << p_instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) {
+		if (has_component<GeometryComponent>(p_instance->self)) {
 
 			InstanceGeometryData *geom = get_instance_geometry(p_instance->self);
-
+			GeometryComponent & gcomp = get_component<GeometryComponent>(p_instance->self);
 			bool can_cast_shadows = true;
 			bool is_animated = false;
 
@@ -3491,17 +3524,17 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 				}
 			}
 
-			if (can_cast_shadows != geom->can_cast_shadows) {
+			if (can_cast_shadows != gcomp.can_cast_shadows) {
 				//ability to cast shadows change, let lights now
 				for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
 					InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
 					light->shadow_dirty = true;
 				}
 
-				geom->can_cast_shadows = can_cast_shadows;
+				gcomp.can_cast_shadows = can_cast_shadows;
 			}
 
-			geom->material_is_animated = is_animated;
+			gcomp.material_is_animated = is_animated;
 		}
 	}
 
@@ -3519,7 +3552,7 @@ void VisualServerScene::update_dirty_instances() {
 
 	VSG::storage->update_dirty_resources();
 
-	auto view = VSG::ecs->registry.view<InstanceComponent, Dirty>();
+	auto view = VSG::ecs->registry.persistent_view<InstanceComponent, Dirty>();
 	for (auto entity : view) {
 		Instance *inst = view.get<InstanceComponent>(entity).instance;
 		_update_dirty_instance(inst);

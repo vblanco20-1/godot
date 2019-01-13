@@ -167,7 +167,7 @@ public:
 		bool update_aabb;
 		bool update_materials;
 
-		SelfList<Instance> update_item;
+		//SelfList<Instance> update_item;
 
 		AABB aabb;
 		AABB transformed_aabb;
@@ -199,8 +199,8 @@ public:
 		}
 
 		Instance() :
-				scenario_item(this),
-				update_item(this) {
+				scenario_item(this)
+				{
 
 			octree_id = 0;
 			scenario = NULL;
@@ -241,25 +241,25 @@ public:
 	struct InstanceGeometryData : public InstanceBaseData {
 
 		List<Instance *> lighting;
-		bool lighting_dirty;
-		bool can_cast_shadows;
-		bool material_is_animated;
+		//bool lighting_dirty;
+		//bool can_cast_shadows;
+		//bool material_is_animated;
 
 		List<Instance *> reflection_probes;
-		bool reflection_dirty;
+		//bool reflection_dirty;
 
 		List<Instance *> gi_probes;
-		bool gi_probes_dirty;
+		//bool gi_probes_dirty;
 
 		List<Instance *> lightmap_captures;
 
 		InstanceGeometryData() {
 
-			lighting_dirty = false;
-			reflection_dirty = true;
-			can_cast_shadows = true;
-			material_is_animated = true;
-			gi_probes_dirty = true;
+			//lighting_dirty = false;
+			//reflection_dirty = true;
+			//can_cast_shadows = true;
+			//material_is_animated = true;
+			//gi_probes_dirty = true;
 		}
 	};
 
