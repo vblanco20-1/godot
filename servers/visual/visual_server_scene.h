@@ -235,7 +235,7 @@ public:
 		}
 	};
 
-	SelfList<Instance>::List _instance_update_list;
+	//SelfList<Instance>::List _instance_update_list;
 	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials = false);
 
 	struct InstanceGeometryData : public InstanceBaseData {

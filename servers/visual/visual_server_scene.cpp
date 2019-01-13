@@ -42,8 +42,27 @@ struct Dirty {
 
 };
 struct GeometryComponent {
-	InstanceGeometryData * Data;
+	VisualServerScene::InstanceGeometryData *Data;
 };
+
+VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
+
+	if (VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<GeometryComponent>(id.eid)) {
+		return VSG::ecs->registry.get<GeometryComponent>(id.eid).Data;
+	}
+	return nullptr;
+}
+template<typename T>
+bool has_component(RID id) {
+	return VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<T>(id.eid);
+}
+template<typename T>
+void clear_component(RID id) {
+	if (VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<T>(id.eid))
+	{
+		VSG::ecs->registry.remove<T>(id.eid);
+	}
+}
 RID VisualServerScene::camera_create() {
 	auto eid = VSG::ecs->registry.create();
 	VSG::ecs->registry.assign<Camera>(eid, Camera());
@@ -182,10 +201,10 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_LIGHT && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	if (B->base_type == VS::INSTANCE_LIGHT && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightData *light = static_cast<InstanceLightData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		InstanceLightData::PairInfo pinfo;
 		pinfo.geometry = A;
@@ -200,10 +219,10 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		geom->lighting_dirty = true;
 
 		return E; //this element should make freeing faster
-	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		InstanceReflectionProbeData::PairInfo pinfo;
 		pinfo.geometry = A;
@@ -214,10 +233,10 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		geom->reflection_dirty = true;
 
 		return E; //this element should make freeing faster
-	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		InstanceLightmapCaptureData::PairInfo pinfo;
 		pinfo.geometry = A;
@@ -227,10 +246,10 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
 
 		return E; //this element should make freeing faster
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		InstanceGIProbeData::PairInfo pinfo;
 		pinfo.geometry = A;
@@ -261,10 +280,10 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_LIGHT && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	if (B->base_type == VS::INSTANCE_LIGHT && (has_component<GeometryComponent>(A->self))) {
 
 		InstanceLightData *light = static_cast<InstanceLightData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		List<InstanceLightData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightData::PairInfo>::Element *>(udata);
 
@@ -276,10 +295,10 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		}
 		geom->lighting_dirty = true;
 
-	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		List<InstanceReflectionProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceReflectionProbeData::PairInfo>::Element *>(udata);
 
@@ -287,10 +306,10 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		reflection_probe->geometries.erase(E);
 
 		geom->reflection_dirty = true;
-	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		List<InstanceLightmapCaptureData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightmapCaptureData::PairInfo>::Element *>(udata);
 
@@ -298,10 +317,10 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		lightmap_capture->geometries.erase(E);
 		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
 
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && ((1 << A->base_type) & VS::INSTANCE_GEOMETRY_MASK)) {
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(A->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
 
 		List<InstanceGIProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceGIProbeData::PairInfo>::Element *>(udata);
 
@@ -381,10 +400,10 @@ void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_upda
 
 	reg.assign_or_replace<Dirty>(p_instance->self.eid);
 
-	if (p_instance->update_item.in_list())
-		return;
-
-	_instance_update_list.add(&p_instance->update_item);
+	//if (p_instance->update_item.in_list())
+	//	return;
+	//
+	//_instance_update_list.add(&p_instance->update_item);
 }
 
 // from can be mesh, light,  area and portal so far.
@@ -529,6 +548,7 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 			case VS::INSTANCE_PARTICLES: {
 
 				InstanceGeometryData *geom = memnew(InstanceGeometryData);
+				VSG::ecs->registry.assign_or_replace<GeometryComponent>(instance->self.eid,geom);
 				instance->base_data = geom;
 			} break;
 			case VS::INSTANCE_REFLECTION_PROBE: {
@@ -980,7 +1000,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	if ((1 << p_instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) {
 
-		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(p_instance->self);//static_cast<InstanceGeometryData *>(p_instance->base_data);
 		//make sure lights are updated if it casts shadow
 
 		if (geom->can_cast_shadows) {
@@ -1301,7 +1321,7 @@ _FORCE_INLINE_ static Color _light_capture_voxel_cone_trace(const RasterizerStor
 
 void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance) {
 
-	InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
+	InstanceGeometryData *geom = get_instance_geometry(p_instance->self);//static_cast<InstanceGeometryData *>(p_instance->base_data);
 
 	static const Vector3 cone_traces[12] = {
 		Vector3(0, 0, 1),
@@ -1387,11 +1407,11 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				for (int i = 0; i < cull_count; i++) {
 
 					Instance *instance = instance_shadow_cull_result[i];
-					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(p_instance->self)->can_cast_shadows) {
 						continue;
 					}
 
-					if (static_cast<InstanceGeometryData *>(instance->base_data)->material_is_animated) {
+					if (get_instance_geometry(p_instance->self)->material_is_animated) {
 						animated_material_found = true;
 					}
 
@@ -1584,7 +1604,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 					float min, max;
 					Instance *instance = instance_shadow_cull_result[j];
-					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+					if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
 						cull_count--;
 						SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 						j--;
@@ -1645,12 +1665,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						for (int j = 0; j < cull_count; j++) {
 
 							Instance *instance = instance_shadow_cull_result[j];
-							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
 								cull_count--;
 								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 								j--;
 							} else {
-								if (static_cast<InstanceGeometryData *>(instance->base_data)->material_is_animated) {
+								if (get_instance_geometry(instance->self)->material_is_animated) {
 									animated_material_found = true;
 								}
 
@@ -1700,12 +1720,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						for (int j = 0; j < cull_count; j++) {
 
 							Instance *instance = instance_shadow_cull_result[j];
-							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+							if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
 								cull_count--;
 								SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 								j--;
 							} else {
-								if (static_cast<InstanceGeometryData *>(instance->base_data)->material_is_animated) {
+								if (get_instance_geometry(instance->self)->material_is_animated) {
 									animated_material_found = true;
 								}
 								instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -1739,12 +1759,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			for (int j = 0; j < cull_count; j++) {
 
 				Instance *instance = instance_shadow_cull_result[j];
-				if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !static_cast<InstanceGeometryData *>(instance->base_data)->can_cast_shadows) {
+				if (!instance->visible || !((1 << instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) || !get_instance_geometry(instance->self)->can_cast_shadows) {
 					cull_count--;
 					SWAP(instance_shadow_cull_result[j], instance_shadow_cull_result[cull_count]);
 					j--;
 				} else {
-					if (static_cast<InstanceGeometryData *>(instance->base_data)->material_is_animated) {
+					if (get_instance_geometry(instance->self)->material_is_animated) {
 						animated_material_found = true;
 					}
 					instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -1990,7 +2010,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			keep = true;
 
-			InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(ins->base_data);
+			InstanceGeometryData *geom = get_instance_geometry(ins->self);
 
 			if (ins->redraw_if_visible) {
 				VisualServerRaster::redraw_request();
@@ -3350,7 +3370,7 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 
 		if ((1 << p_instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) {
 
-			InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
+			InstanceGeometryData *geom = get_instance_geometry(p_instance->self);
 
 			bool can_cast_shadows = true;
 			bool is_animated = false;
@@ -3485,7 +3505,9 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 		}
 	}
 
-	_instance_update_list.remove(&p_instance->update_item);
+	
+	clear_component<Dirty>(p_instance->self);
+	//_instance_update_list.remove(&p_instance->update_item);
 
 	_update_instance(p_instance);
 
@@ -3497,10 +3519,16 @@ void VisualServerScene::update_dirty_instances() {
 
 	VSG::storage->update_dirty_resources();
 
-	while (_instance_update_list.first()) {
-
-		_update_dirty_instance(_instance_update_list.first()->self());
+	auto view = VSG::ecs->registry.view<InstanceComponent, Dirty>();
+	for (auto entity : view) {
+		Instance *inst = view.get<InstanceComponent>(entity).instance;
+		_update_dirty_instance(inst);
+		
 	}
+	//while (_instance_update_list.first()) {
+	//
+	//	_update_dirty_instance(_instance_update_list.first()->self());
+	//}
 }
 
 bool VisualServerScene::free(RID p_rid) {
