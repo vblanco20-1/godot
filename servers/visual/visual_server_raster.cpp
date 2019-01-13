@@ -37,6 +37,7 @@
 #include "visual_server_canvas.h"
 #include "visual_server_global.h"
 #include "visual_server_scene.h"
+#include "core/ecs_registry.h"
 
 // careful, these may run in different threads than the visual server
 
@@ -201,6 +202,7 @@ VisualServerRaster::VisualServerRaster() {
 	VSG::storage = VSG::rasterizer->get_storage();
 	VSG::canvas_render = VSG::rasterizer->get_canvas();
 	VSG::scene_render = VSG::rasterizer->get_scene();
+	VSG::ecs = memnew(ECS_Registry);
 
 	for (int i = 0; i < 4; i++)
 		black_margin[i] = 0;
@@ -212,4 +214,5 @@ VisualServerRaster::~VisualServerRaster() {
 	memdelete(VSG::viewport);
 	memdelete(VSG::rasterizer);
 	memdelete(VSG::scene);
+	memdelete(VSG::ecs);
 }

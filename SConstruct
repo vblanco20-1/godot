@@ -318,6 +318,7 @@ if selected_platform in platform_list:
     if env.msvc:
         # Truncations, narrowing conversions, signed/unsigned comparisons...
         disable_nonessential_warnings = ['/wd4267', '/wd4244', '/wd4305', '/wd4018', '/wd4800']
+        env.Append(CCFLAGS=['/std:c++17'])
         if (env["warnings"] == 'extra'):
             env.Append(CCFLAGS=['/Wall']) # Implies /W4
         elif (env["warnings"] == 'all'):

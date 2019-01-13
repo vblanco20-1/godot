@@ -36,6 +36,7 @@
 class VisualServerCanvas;
 class VisualServerViewport;
 class VisualServerScene;
+class ECS_Registry;
 
 class VisualServerGlobals {
 public:
@@ -43,6 +44,7 @@ public:
 	static RasterizerCanvas *canvas_render;
 	static RasterizerScene *scene_render;
 	static Rasterizer *rasterizer;
+	static ECS_Registry *ecs;
 
 	static VisualServerCanvas *canvas;
 	static VisualServerViewport *viewport;
