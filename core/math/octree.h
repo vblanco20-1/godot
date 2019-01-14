@@ -409,9 +409,9 @@ public:
 
 				Element *e = I->get();
 
-				if (e->last_pass == pass || (use_pairs && !(e->pairable_type & p_cull->mask)))
+				if (/*e->last_pass == pass || */(use_pairs && !(e->pairable_type & p_cull->mask)))
 					continue;
-				e->last_pass = pass;
+				//e->last_pass = pass;
 
 				if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
 
@@ -429,9 +429,9 @@ public:
 
 				Element *e = I->get();
 
-				if (e->last_pass == pass || (use_pairs && !(e->pairable_type & p_cull->mask)))
+				if (/*e->last_pass == pass || */(use_pairs && !(e->pairable_type & p_cull->mask)))
 					continue;
-				e->last_pass = pass;
+				//e->last_pass = pass;
 
 				if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
 

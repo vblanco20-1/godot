@@ -36,6 +36,8 @@
 #include "main/profiler.h"
 #include "thirdparty/concurrentqueue/blockingconcurrentqueue.h"
 #include <vector>
+#include <algorithm>
+#include <execution>
 /* CAMERA API */
 
 struct InstanceComponent {
@@ -1680,7 +1682,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				std::vector<RasterizerScene::InstanceBase*> CullResult;
 				CullResult.reserve(1000);
 
-				int cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
+				//int cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
 				Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
 				p_scenario->octree.cull_convex_lambda(light_frustum_planes, [&](Instance* instance) {
 
@@ -1732,6 +1734,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			VS::LightOmniShadowMode shadow_mode = VSG::storage->light_omni_get_shadow_mode(p_instance->base);
 
 			switch (shadow_mode) {
+
 				case VS::LIGHT_OMNI_SHADOW_DUAL_PARABOLOID: {
 
 					for (int i = 0; i < 2; i++) {
@@ -1753,20 +1756,22 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						std::vector<RasterizerScene::InstanceBase*> CullResult;
 						CullResult.reserve(1000);
 						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
-							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
+							const bool bIsVisible = instance->visible;
+							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
+							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 
-							}
-							else {
+							if (bIsVisible && bIsMesh && bIsShadowcaster) {
+								
 								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
-								instance->depth = near_plane.distance_to(instance->transform.origin);
-								instance->depth_layer = 0;
+								//p_instance->depth = near_plane.distance_to(instance->transform.origin);
+								//p_instance->depth_layer = 0;
 
 								//instance_shadow_cull_result[cull_count] = instance;
 								CullResult.push_back(instance);
 								//instance_shadow_cull_result[cull_count] = instance;
-								cull_count++;
+								//cull_count++;
 							}
 						}, VS::INSTANCE_GEOMETRY_MASK);
 
@@ -1780,7 +1785,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
 					}
 				} break;
-				case VS::LIGHT_OMNI_SHADOW_CUBE: {
+			case VS::LIGHT_OMNI_SHADOW_CUBE: {
 
 					float radius = VSG::storage->light_get_param(p_instance->base, VS::LIGHT_PARAM_RANGE);
 					CameraMatrix cm;
@@ -1814,18 +1819,20 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						std::vector<RasterizerScene::InstanceBase*> CullResult;
 						CullResult.reserve(1000);
 						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
-							if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
+							
+							const bool bIsVisible = instance->visible;
+							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
+							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 
-							}
-							else {
+							if (bIsVisible && bIsMesh && bIsShadowcaster) {
 								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 									animated_material_found = true;
 								}
-								instance->depth = near_plane.distance_to(instance->transform.origin);
-								instance->depth_layer = 0;
+								//instance->depth = near_plane.distance_to(instance->transform.origin);
+								//instance->depth_layer = 0;
 								CullResult.push_back(instance);
 								//instance_shadow_cull_result[cull_count] = instance;
-								cull_count++;
+								//cull_count++;
 							}
 						}, VS::INSTANCE_GEOMETRY_MASK);
 						
@@ -1835,8 +1842,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 						ShadowWorkItem WorkItem;
 						WorkItem.light_instance_set_shadow_transform(light->instance, cm, xform, radius, 0, i);
-						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, ortho_camera, ortho_transform, 0, distances[i + 1], i, bias_scale);
-
+						
 						WorkItem.render_shadow(light->instance, p_shadow_atlas, i,  CullResult);
 						ShadowWorkQueue.enqueue(WorkItem);
 
@@ -2026,6 +2032,28 @@ void VisualServerScene::render_camera(Ref<ARVRInterface> &p_interface, ARVRInter
 	_render_scene(cam_transform, camera_matrix, false, camera->env, p_scenario, p_shadow_atlas, RID(), -1);
 };
 
+struct ShadowUpdateWork {
+	void light_instance_update_shadow(VisualServerScene::Instance *p_instance, const Transform p_cam_transform, const CameraMatrix &p_cam_projection,
+		bool p_cam_orthogonal, RID p_shadow_atlas, VisualServerScene::Scenario *p_scenario) {
+
+		_p_instance=p_instance;
+		_p_cam_transform=p_cam_transform;
+		_p_cam_projection=p_cam_projection;
+		_p_cam_orthogonal=p_cam_orthogonal;
+		_p_shadow_atlas=p_shadow_atlas;
+		_p_scenario=p_scenario;
+		light = nullptr;
+	}
+
+	VisualServerScene::Instance *_p_instance;
+	Transform _p_cam_transform;
+	CameraMatrix _p_cam_projection;
+	bool _p_cam_orthogonal;
+	RID _p_shadow_atlas;
+	VisualServerScene::Scenario *_p_scenario;
+	VisualServerScene::InstanceLightData * light;
+
+};
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
 
 	SCOPE_PROFILE(prepare_scene);
@@ -2219,6 +2247,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	RID *directional_light_ptr = &light_instance_cull_result[light_cull_count];
 	directional_light_count = 0;
 
+	std::vector<ShadowUpdateWork> UpdateWork;
+	UpdateWork.reserve(10);
 	// directional lights
 	{
 
@@ -2249,35 +2279,45 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 		VSG::scene_render->set_directional_shadow_count(directional_shadow_count);
 
+	
 		for (int i = 0; i < directional_shadow_count; i++) {
-
-			_light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-		}
+			ShadowUpdateWork work;
+			work.light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+			UpdateWork.push_back(work);
+			//_light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+		}	
 	}
 
+	
 	ShadowWorkItem QItem;
-	while (ShadowWorkQueue.try_dequeue(QItem)) {
-
-		if (QItem.bUpdateTransform) {
-			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split,QItem.tf_p_pass,QItem.tf_p_bias_scale);
-
-		}
-		if (QItem.bRender) {
-			VSG::scene_render->render_shadow(QItem.r_p_light,QItem.r_p_shadow_atlas, QItem.r_p_pass,&QItem.r_cullresult[0],QItem.r_cullresult.size());
-		}
-
-	}
+	//while (ShadowWorkQueue.try_dequeue(QItem)) {
+	//	SCOPE_PROFILE(ShadowRender_1)
+	//	if (QItem.bUpdateTransform) {
+	//		VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split,QItem.tf_p_pass,QItem.tf_p_bias_scale);
+	//
+	//	}
+	//	if (QItem.bRender) {
+	//		VSG::scene_render->render_shadow(QItem.r_p_light,QItem.r_p_shadow_atlas, QItem.r_p_pass,&QItem.r_cullresult[0],QItem.r_cullresult.size());
+	//	}
+	//
+	//}
 
 	{ //setup shadow maps
 
 		//SortArray<Instance*,_InstanceLightsort> sorter;
 		//sorter.sort(light_cull_result,light_cull_count);
+		//std::vector<Instance*> Lights;
+		//Lights.reserve(light_cull_count);
+		//for (int i = 0; i < light_cull_count; i++) {
+		//	Lights.push_back(light_cull_result[i]);
+		//}
+		//std::for_each(std::execution::par,Lights.begin(),Lights.end(), [&](Instance* ins){
 		for (int i = 0; i < light_cull_count; i++) {
 
 			Instance *ins = light_cull_result[i];
 
-			if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
-				continue;
+			//if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
+			//	break;
 
 			InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
 
@@ -2363,21 +2403,63 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			if (redraw) {
 				//must redraw!
-				light->shadow_dirty = _light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-			}
-		}
+				ShadowUpdateWork work;
+				work.light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+				work.light = light;
+				UpdateWork.push_back(work);
+
+				//_light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+			}			
+		};
 	}
 
-
-
 	
-	while (ShadowWorkQueue.try_dequeue(QItem)) {
+	if (UpdateWork.size() > 4)
+	{
+		//sort pointlights to start becouse they flicker hard
+		auto it = std::partition(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+			return (VSG::storage->light_get_type(work._p_instance->base) == VS::LIGHT_OMNI) ;			
+		});
 
+		std::for_each(std::execution::par, it, UpdateWork.end(), [&](ShadowUpdateWork & work) {
+
+			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+				work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			if (work.light) {
+				work.light->shadow_dirty = true;
+			}
+		});
+
+		std::for_each(UpdateWork.begin(),it, [&](ShadowUpdateWork & work) {
+			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+				work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			if (work.light) {
+				work.light->shadow_dirty = bShadowDirty;
+			}
+		});
+
+	}
+	else {
+		std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+
+			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			if (work.light) {
+				work.light->shadow_dirty = true;
+			}
+		});
+	}
+
+	printf("numlights = %i , numwork = %i, queue = %i  \n",(int)light_cull_count,(int)UpdateWork.size(),(int)ShadowWorkQueue.size_approx());
+	UpdateWork.empty();
+	while (ShadowWorkQueue.try_dequeue(QItem)) {
+		SCOPE_PROFILE(ShadowRender_2)
 		if (QItem.bUpdateTransform) {
+			SCOPE_PROFILE(ShadowTransform)
 			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
 
 		}
 		if (QItem.bRender) {
+			SCOPE_PROFILE(ShadowPass)
 			VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
 		}
 	}
