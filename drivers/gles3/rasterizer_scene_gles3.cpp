@@ -4706,7 +4706,7 @@ void RasterizerSceneGLES3::render_shadow(RID p_light, RID p_shadow_atlas, int p_
 	render_list.clear();
 	_fill_render_list(p_cull_result, p_cull_count, true, true);
 
-	render_list.sort_by_depth(false); //shadow is front to back for performance
+	//render_list.sort_by_depth(false); //shadow is front to back for performance
 
 	glDisable(GL_BLEND);
 	glDisable(GL_DITHER);
