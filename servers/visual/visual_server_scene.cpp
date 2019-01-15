@@ -2414,17 +2414,14 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		};
 	}
 
-	
-	if (UpdateWork.size() > 4)
+	static bool bParallelShadowcast = true;
+	if (UpdateWork.size() > 2 && bParallelShadowcast)
 	{
-		//std::mutex m;
-		//std::condition_variable cv;
-		//std::atomic<bool> lock{true};
-		//lock.store(true);
 
 		//execute one to prime the queue
 		{
-			ShadowUpdateWork & work = UpdateWork.back();
+
+			ShadowUpdateWork & work = UpdateWork[0];
 			
 		
 			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
@@ -2432,33 +2429,45 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			if (work.light) {
 				work.light->shadow_dirty = bShadowDirty;
 			}
-			UpdateWork.pop_back();
+		
 		};
 
 		auto handle = std::async(std::launch::async,
 		[&](){//sort pointlights to start becouse they flicker hard
-			auto it = std::partition(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-				return (VSG::storage->light_get_type(work._p_instance->base) == VS::LIGHT_OMNI);
-			});
-
-			std::for_each(std::execution::par, it, UpdateWork.end(), [&](ShadowUpdateWork & work) {
-
-				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-					work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			SCOPE_PROFILE(ShadowAsyncWork);
+			//std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+			for(int i = 1; i < UpdateWork.size();i++)
+			{
+				ShadowUpdateWork & work = UpdateWork[i];
+				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
 				if (work.light) {
 					work.light->shadow_dirty = bShadowDirty;
 				}
-				//ready = true;
-				//cv.notify_one();
-			});
-			
-			std::for_each(UpdateWork.begin(), it, [&](ShadowUpdateWork & work) {
-				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-					work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-				if (work.light) {
-					work.light->shadow_dirty = bShadowDirty;
-				}
-			});
+			}
+			//});
+
+			//auto it = std::partition(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+			//	return (VSG::storage->light_get_type(work._p_instance->base) == VS::LIGHT_OMNI);
+			//});
+			//
+			//std::for_each(std::execution::par, it, UpdateWork.end(), [&](ShadowUpdateWork & work) {
+			//
+			//	bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+			//		work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			//	if (work.light) {
+			//		work.light->shadow_dirty = bShadowDirty;
+			//	}
+			//	//ready = true;
+			//	//cv.notify_one();
+			//});
+			//
+			//std::for_each(UpdateWork.begin(), it, [&](ShadowUpdateWork & work) {
+			//	bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+			//		work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+			//	if (work.light) {
+			//		work.light->shadow_dirty = bShadowDirty;
+			//	}
+			//});
 			
 			return 0;
 		});
@@ -2494,7 +2503,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			}
 		});
 
-		printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
+		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 
 		
 	}
