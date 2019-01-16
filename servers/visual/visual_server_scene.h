@@ -40,6 +40,7 @@
 #include "core/os/thread.h"
 #include "core/self_list.h"
 #include "servers/arvr/arvr_interface.h"
+#include <vector>
 
 
 class VisualServerScene {
@@ -241,6 +242,7 @@ public:
 	struct InstanceGeometryData : public InstanceBaseData {
 
 		List<Instance *> lighting;
+		//List<Instance *> lighting;
 		//bool lighting_dirty;
 		//bool can_cast_shadows;
 		//bool material_is_animated;
@@ -300,7 +302,7 @@ public:
 		uint64_t last_version;
 		List<Instance *>::Element *D; // directional light in scenario
 
-		bool shadow_dirty;
+		
 
 		List<PairInfo> geometries;
 
@@ -308,10 +310,10 @@ public:
 
 		InstanceLightData() {
 
-			shadow_dirty = true;
+			//shadow_dirty = true;
 			D = NULL;
 			last_version = 0;
-			baked_light = NULL;
+			//baked_light = NULL;
 		}
 	};
 

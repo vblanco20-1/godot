@@ -74,6 +74,28 @@ struct GeometryComponent {
 	}
 };
 
+struct LightComponent {
+	VisualServerScene::InstanceLightData *Data;
+
+	bool shadow_dirty;
+	VisualServerScene::Instance *baked_light;
+
+	LightComponent() {
+		Data = nullptr;
+		shadow_dirty = true;
+		baked_light = nullptr;
+	}
+
+	LightComponent(VisualServerScene::InstanceLightData * _Data) {
+		shadow_dirty = true;
+		baked_light = nullptr;
+		Data = _Data;
+	}
+};
+struct DirectionalLight {
+
+};
+
 struct ShadowWorkItem {
 	//shadowtransform
 	bool bUpdateTransform{false};
@@ -131,6 +153,14 @@ T & get_component(RID id) {
 	CRASH_COND(!VSG::ecs->registry.has<T>(id.eid) );
 	
 	return VSG::ecs->registry.get<T>(id.eid);
+}
+template<typename T>
+T & get_component(EntityID id) {
+
+	CRASH_COND(!VSG::ecs->registry.valid(id));
+	CRASH_COND(!VSG::ecs->registry.has<T>(id));
+
+	return VSG::ecs->registry.get<T>(id);
 }
 template<typename T>
 void clear_component(RID id) {
@@ -277,10 +307,13 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_LIGHT && has_component<GeometryComponent>(A->self)) {
+	if (has_component<LightComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
-		InstanceLightData *light = static_cast<InstanceLightData *>(B->base_data);
-		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
+		LightComponent &ligh_comp = get_component<LightComponent>(B->self);
+		GeometryComponent &geo_comp = get_component<GeometryComponent>(A->self);
+
+		InstanceLightData *light = ligh_comp.Data;
+		InstanceGeometryData *geom = geo_comp.Data;
 
 		InstanceLightData::PairInfo pinfo;
 		pinfo.geometry = A;
@@ -288,11 +321,11 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 
 		List<InstanceLightData::PairInfo>::Element *E = light->geometries.push_back(pinfo);
 
-		if (get_component<GeometryComponent>(A->self).can_cast_shadows) {
+		if (geo_comp.can_cast_shadows) {
 
-			light->shadow_dirty = true;
+			ligh_comp.shadow_dirty = true;
 		}
-		get_component<GeometryComponent>(A->self).lighting_dirty = true;
+		geo_comp.lighting_dirty = true;
 
 		return E; //this element should make freeing faster
 	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
@@ -356,20 +389,24 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_LIGHT && (has_component<GeometryComponent>(A->self))) {
+	if (has_component<LightComponent>(B->self) && (has_component<GeometryComponent>(A->self))) {
 
-		InstanceLightData *light = static_cast<InstanceLightData *>(B->base_data);
-		InstanceGeometryData *geom = get_instance_geometry(A->self);//static_cast<InstanceGeometryData *>(A->base_data);
+		LightComponent &ligh_comp = get_component<LightComponent>(B->self);
+		GeometryComponent &geo_comp = get_component<GeometryComponent>(A->self);
+
+		InstanceLightData *light = ligh_comp.Data;
+		InstanceGeometryData *geom = geo_comp.Data;
+
 
 		List<InstanceLightData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightData::PairInfo>::Element *>(udata);
 
 		geom->lighting.erase(E->get().L);
 		light->geometries.erase(E);
 
-		if (get_component<GeometryComponent>(A->self).can_cast_shadows) {
-			light->shadow_dirty = true;
+		if (geo_comp.can_cast_shadows) {
+			ligh_comp.shadow_dirty = true;
 		}
-		get_component<GeometryComponent>(A->self).lighting_dirty = true;
+		geo_comp.lighting_dirty = true;
 
 	} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
 
@@ -538,8 +575,12 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 				if (instance->scenario && light->D) {
 					instance->scenario->directional_lights.erase(light->D);
 					light->D = NULL;
+					clear_component<DirectionalLight>(instance->self);
 				}
+				clear_component<LightComponent>(instance->self);
 				VSG::scene_render->free(light->instance);
+
+				
 			} break;
 			case VS::INSTANCE_REFLECTION_PROBE: {
 
@@ -612,9 +653,13 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 				if (scenario && VSG::storage->light_get_type(p_base) == VS::LIGHT_DIRECTIONAL) {
 					light->D = scenario->directional_lights.push_back(instance);
+
+					VSG::ecs->registry.assign_or_replace<DirectionalLight>(instance->self.eid);
 				}
 
 				light->instance = VSG::scene_render->light_instance_create(p_base);
+				
+				VSG::ecs->registry.assign_or_replace<LightComponent>(instance->self.eid, light);
 
 				instance->base_data = light;
 			} break;
@@ -1049,12 +1094,13 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	p_instance->version++;
 
-	if (p_instance->base_type == VS::INSTANCE_LIGHT) {
+	if (has_component<LightComponent>(p_instance->self)) {
 
-		InstanceLightData *light = static_cast<InstanceLightData *>(p_instance->base_data);
+		LightComponent& light_comp = get_component<LightComponent>(p_instance->self);
+		InstanceLightData *light = light_comp.Data;
 
 		VSG::scene_render->light_instance_set_transform(light->instance, p_instance->transform);
-		light->shadow_dirty = true;
+		light_comp.shadow_dirty = true;
 	}
 
 	if (p_instance->base_type == VS::INSTANCE_REFLECTION_PROBE) {
@@ -1074,15 +1120,17 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		return;
 	}
 
-	if ((1 << p_instance->base_type) & VS::INSTANCE_GEOMETRY_MASK) {
+	if (has_component<GeometryComponent>(p_instance->self)) {
 
 		InstanceGeometryData *geom = get_instance_geometry(p_instance->self);//static_cast<InstanceGeometryData *>(p_instance->base_data);
 		//make sure lights are updated if it casts shadow
 
 		if (get_component<GeometryComponent>(p_instance->self).can_cast_shadows) {
 			for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-				InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-				light->shadow_dirty = true;
+				LightComponent& light_comp = get_component<LightComponent>(E->get()->self);
+				light_comp.shadow_dirty = true;
+				//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+				//light->shadow_dirty = true;
 			}
 		}
 
@@ -1450,7 +1498,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 	SCOPE_PROFILE(update_shadow);
 
-	InstanceLightData *light = static_cast<InstanceLightData *>(p_instance->base_data);
+	InstanceLightData *light = get_component<LightComponent>(p_instance->self).Data;
 
 	Transform light_transform = p_instance->transform;
 	light_transform.orthonormalize(); //scale does not count on lights
@@ -2043,7 +2091,8 @@ struct ShadowUpdateWork {
 		_p_cam_orthogonal=p_cam_orthogonal;
 		_p_shadow_atlas=p_shadow_atlas;
 		_p_scenario=p_scenario;
-		light = nullptr;
+		light = p_instance->self.eid;
+		//light = entt::registry<EntityID>::entity_type ;
 	}
 
 	VisualServerScene::Instance *_p_instance;
@@ -2052,7 +2101,8 @@ struct ShadowUpdateWork {
 	bool _p_cam_orthogonal;
 	RID _p_shadow_atlas;
 	VisualServerScene::Scenario *_p_scenario;
-	VisualServerScene::InstanceLightData * light;
+	EntityID light;
+	//VisualServerScene::InstanceLightData * light;
 
 };
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
@@ -2105,11 +2155,12 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		if ((camera_layer_mask & ins->layer_mask) == 0) {
 
 			//failure
-		} else if (ins->base_type == VS::INSTANCE_LIGHT && ins->visible) {
+		} else if (has_component<LightComponent>(ins->self) &&/*ins->base_type == VS::INSTANCE_LIGHT && */ins->visible) {
 
 			if (ins->visible && light_cull_count < MAX_LIGHTS_CULLED) {
 
-				InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
+				LightComponent& light_comp = get_component<LightComponent>(ins->self);
+				InstanceLightData *light = light_comp.Data;
 
 				if (!light->geometries.empty()) {
 					//do not add this light if no geometry is affected by it..
@@ -2319,8 +2370,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			//if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
 			//	break;
-
-			InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
+			LightComponent& light_comp = get_component<LightComponent>(ins->self);
+			InstanceLightData *light = light_comp.Data;
 
 			float coverage = 0.f;
 
@@ -2395,9 +2446,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 			}
 
-			if (light->shadow_dirty) {
+			if (light_comp.shadow_dirty) {
 				light->last_version++;
-				light->shadow_dirty = false;
+				light_comp.shadow_dirty = false;
 			}
 
 			bool redraw = VSG::scene_render->shadow_atlas_update_light(p_shadow_atlas, light->instance, coverage, light->last_version);
@@ -2406,7 +2457,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				//must redraw!
 				ShadowUpdateWork work;
 				work.light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-				work.light = light;
+				//work.light = light->;
 				UpdateWork.push_back(work);
 
 				//_light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
@@ -2426,9 +2477,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		
 			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
 				work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-			if (work.light) {
-				work.light->shadow_dirty = bShadowDirty;
-			}
+			
+			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+			
 		
 		};
 
@@ -2440,9 +2491,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			{
 				ShadowUpdateWork & work = UpdateWork[i];
 				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-				if (work.light) {
-					work.light->shadow_dirty = bShadowDirty;
-				}
+
+				get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
 			}
 			//});
 
@@ -2498,9 +2548,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
 
 			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-			if (work.light) {
-				work.light->shadow_dirty = true;
-			}
+
+			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
 		});
 
 		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
@@ -2522,7 +2571,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	}
 	
 
-	UpdateWork.empty();
+	UpdateWork.clear();
 }
 
 void VisualServerScene::_render_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
@@ -3666,6 +3715,7 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 
 			InstanceGeometryData *geom = get_instance_geometry(p_instance->self);
 			GeometryComponent & gcomp = get_component<GeometryComponent>(p_instance->self);
+			
 			bool can_cast_shadows = true;
 			bool is_animated = false;
 
@@ -3788,8 +3838,11 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 			if (can_cast_shadows != gcomp.can_cast_shadows) {
 				//ability to cast shadows change, let lights now
 				for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-					InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-					light->shadow_dirty = true;
+
+					LightComponent& light_comp = get_component<LightComponent>(E->get()->self);
+					light_comp.shadow_dirty = true;
+					//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+					//light->shadow_dirty = true;
 				}
 
 				gcomp.can_cast_shadows = can_cast_shadows;
