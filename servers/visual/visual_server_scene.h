@@ -164,9 +164,9 @@ public:
 		Scenario *scenario;
 		SelfList<Instance> scenario_item;
 
-		//aabb stuff
-		bool update_aabb;
-		bool update_materials;
+		////aabb stuff
+		//bool update_aabb;
+		//bool update_materials;
 
 		//SelfList<Instance> update_item;
 
@@ -206,8 +206,8 @@ public:
 			octree_id = 0;
 			scenario = NULL;
 
-			update_aabb = false;
-			update_materials = false;
+			//update_aabb = false;
+			//update_materials = false;
 
 			extra_margin = 0;
 
@@ -254,6 +254,8 @@ public:
 		//bool gi_probes_dirty;
 
 		List<Instance *> lightmap_captures;
+
+		
 
 		InstanceGeometryData() {
 
@@ -486,6 +488,7 @@ public:
 	_FORCE_INLINE_ void _update_instance(Instance *p_instance);
 	_FORCE_INLINE_ void _update_instance_aabb(Instance *p_instance);
 	_FORCE_INLINE_ void _update_dirty_instance(Instance *p_instance);
+	_FORCE_INLINE_ void _update_instance_material(Instance *p_instance);
 	_FORCE_INLINE_ void _update_instance_lightmap_captures(Instance *p_instance);
 
 	_FORCE_INLINE_ bool _light_instance_update_shadow(Instance *p_instance, const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_shadow_atlas, Scenario *p_scenario);

@@ -35,6 +35,7 @@
 #include "core/project_settings.h"
 #include "rasterizer_canvas_gles3.h"
 #include "servers/visual/visual_server_raster.h"
+#include "main/profiler.h"
 
 #ifndef GLES_OVER_GL
 #define glClearDepth glClearDepthf
@@ -1993,6 +1994,7 @@ void RasterizerSceneGLES3::_set_cull(bool p_front, bool p_disabled, bool p_rever
 }
 
 void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_element_count, const Transform &p_view_transform, const CameraMatrix &p_projection, GLuint p_base_env, bool p_reverse_cull, bool p_alpha_pass, bool p_shadow, bool p_directional_add, bool p_directional_shadows) {
+	SCOPE_PROFILE(Render_List);
 
 	glBindBufferBase(GL_UNIFORM_BUFFER, 0, state.scene_ubo); //bind globals ubo
 
@@ -2796,7 +2798,7 @@ void RasterizerSceneGLES3::_setup_directional_light(int p_index, const Transform
 }
 
 void RasterizerSceneGLES3::_setup_lights(RID *p_light_cull_result, int p_light_cull_count, const Transform &p_camera_inverse_transform, const CameraMatrix &p_camera_projection, RID p_shadow_atlas) {
-
+	SCOPE_PROFILE(Setup_Lights);
 	state.omni_light_count = 0;
 	state.spot_light_count = 0;
 	state.directional_light_count = 0;
@@ -3021,7 +3023,7 @@ void RasterizerSceneGLES3::_setup_lights(RID *p_light_cull_result, int p_light_c
 }
 
 void RasterizerSceneGLES3::_setup_reflections(RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, const Transform &p_camera_inverse_transform, const CameraMatrix &p_camera_projection, RID p_reflection_atlas, Environment *p_env) {
-
+	SCOPE_PROFILE(Setup_Reflections);
 	state.reflection_probe_count = 0;
 
 	for (int i = 0; i < p_reflection_probe_cull_count; i++) {
@@ -3153,7 +3155,7 @@ void RasterizerSceneGLES3::_copy_texture_to_front_buffer(GLuint p_texture) {
 }
 
 void RasterizerSceneGLES3::_fill_render_list(InstanceBase **p_cull_result, int p_cull_count, bool p_depth_pass, bool p_shadow_pass) {
-
+	SCOPE_PROFILE(Fill_Render_List);
 	current_geometry_index = 0;
 	current_material_index = 0;
 	state.used_sss = false;
@@ -4078,7 +4080,7 @@ void RasterizerSceneGLES3::_post_process(Environment *env, const CameraMatrix &p
 }
 
 void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-
+	SCOPE_PROFILE(Render_Scene);
 	//first of all, make a new render pass
 	render_pass++;
 
@@ -4151,7 +4153,10 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 
 		render_list.clear();
 		_fill_render_list(p_cull_result, p_cull_count, true, false);
+		{
+		SCOPE_PROFILE(Render_Sort);
 		render_list.sort_by_key(false);
+		}
 		state.scene_shader.set_conditional(SceneShaderGLES3::RENDER_DEPTH, true);
 		_render_list(render_list.elements, render_list.element_count, p_cam_transform, p_cam_projection, 0, false, false, true, false, false);
 		state.scene_shader.set_conditional(SceneShaderGLES3::RENDER_DEPTH, false);
@@ -4381,9 +4386,10 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glDisable(GL_BLEND);
 	}
-
+	{
+		SCOPE_PROFILE(Render_Sort);
 	render_list.sort_by_key(false);
-
+	}
 	if (state.directional_light_count == 0) {
 		directional_light = NULL;
 		_render_list(render_list.elements, render_list.element_count, p_cam_transform, p_cam_projection, env_radiance_tex, false, false, false, false, shadow_atlas != NULL);
@@ -4448,9 +4454,10 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_SCISSOR_TEST);
-
-	render_list.sort_by_reverse_depth_and_priority(true);
-
+	{
+		SCOPE_PROFILE(Render_Sort_prio);
+		render_list.sort_by_reverse_depth_and_priority(true);
+	}
 	if (state.directional_light_count == 0) {
 		directional_light = NULL;
 		_render_list(&render_list.elements[render_list.max_elements - render_list.alpha_element_count], render_list.alpha_element_count, p_cam_transform, p_cam_projection, env_radiance_tex, false, true, false, false, shadow_atlas != NULL);

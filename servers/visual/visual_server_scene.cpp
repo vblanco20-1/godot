@@ -45,7 +45,13 @@ struct InstanceComponent {
 	VisualServerScene::Instance * instance;
 };
 struct Dirty {
-
+	//aabb stuff
+	bool update_aabb;
+	bool update_materials;
+	Dirty() {
+		update_aabb = false;
+		update_materials = false;
+	}
 };
 struct GeometryComponent {
 	VisualServerScene::InstanceGeometryData *Data;
@@ -504,14 +510,21 @@ void VisualServerScene::scenario_set_reflection_atlas_size(RID p_scenario, int p
 
 void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials) {
 
-	if (p_update_aabb)
-		p_instance->update_aabb = true;
-	if (p_update_materials)
-		p_instance->update_materials = true;
+	
 
 	auto &reg = VSG::ecs->registry;
+	if (!has_component<Dirty>(p_instance->self)) {
+		reg.assign_or_replace<Dirty>(p_instance->self.eid,Dirty());
+	}
+	
 
-	reg.assign_or_replace<Dirty>(p_instance->self.eid);
+	if (p_update_aabb)
+		get_component<Dirty>(p_instance->self.eid).update_aabb = true;
+	if (p_update_materials)
+		get_component<Dirty>(p_instance->self.eid).update_materials = true;
+
+	
+
 
 	//if (p_instance->update_item.in_list())
 	//	return;
@@ -1262,6 +1275,9 @@ void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
 
 	p_instance->aabb = new_aabb;
 }
+
+
+
 
 _FORCE_INLINE_ static void _light_capture_sample_octree(const RasterizerStorage::LightmapCaptureOctree *p_octree, int p_cell_subdiv, const Vector3 &p_pos, const Vector3 &p_dir, float p_level, Vector3 &r_color, float &r_alpha) {
 
@@ -2303,7 +2319,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	UpdateWork.reserve(10);
 	// directional lights
 	{
-
+		//#TODO this should be a ecs query
 		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * scenario->directional_lights.size());
 		int directional_shadow_count = 0;
 
@@ -2342,34 +2358,17 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	
 	ShadowWorkItem QItem;
-	//while (ShadowWorkQueue.try_dequeue(QItem)) {
-	//	SCOPE_PROFILE(ShadowRender_1)
-	//	if (QItem.bUpdateTransform) {
-	//		VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split,QItem.tf_p_pass,QItem.tf_p_bias_scale);
-	//
-	//	}
-	//	if (QItem.bRender) {
-	//		VSG::scene_render->render_shadow(QItem.r_p_light,QItem.r_p_shadow_atlas, QItem.r_p_pass,&QItem.r_cullresult[0],QItem.r_cullresult.size());
-	//	}
-	//
-	//}
+	
 
 	{ //setup shadow maps
 
-		//SortArray<Instance*,_InstanceLightsort> sorter;
-		//sorter.sort(light_cull_result,light_cull_count);
-		//std::vector<Instance*> Lights;
-		//Lights.reserve(light_cull_count);
-		//for (int i = 0; i < light_cull_count; i++) {
-		//	Lights.push_back(light_cull_result[i]);
-		//}
-		//std::for_each(std::execution::par,Lights.begin(),Lights.end(), [&](Instance* ins){
+		
 		for (int i = 0; i < light_cull_count; i++) {
 
 			Instance *ins = light_cull_result[i];
 
-			//if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
-			//	break;
+			if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
+				continue;
 			LightComponent& light_comp = get_component<LightComponent>(ins->self);
 			InstanceLightData *light = light_comp.Data;
 
@@ -2471,17 +2470,14 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 		//execute one to prime the queue
 		{
-
 			ShadowUpdateWork & work = UpdateWork[0];
-			
 		
 			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
 				work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
 			
 			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
 			
-		
-		};
+		}
 
 		auto handle = std::async(std::launch::async,
 		[&](){//sort pointlights to start becouse they flicker hard
@@ -2493,31 +2489,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
 
 				get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-			}
-			//});
-
-			//auto it = std::partition(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-			//	return (VSG::storage->light_get_type(work._p_instance->base) == VS::LIGHT_OMNI);
-			//});
-			//
-			//std::for_each(std::execution::par, it, UpdateWork.end(), [&](ShadowUpdateWork & work) {
-			//
-			//	bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-			//		work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-			//	if (work.light) {
-			//		work.light->shadow_dirty = bShadowDirty;
-			//	}
-			//	//ready = true;
-			//	//cv.notify_one();
-			//});
-			//
-			//std::for_each(UpdateWork.begin(), it, [&](ShadowUpdateWork & work) {
-			//	bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-			//		work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-			//	if (work.light) {
-			//		work.light->shadow_dirty = bShadowDirty;
-			//	}
-			//});
+			}			
 			
 			return 0;
 		});
@@ -2529,7 +2501,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 		while (ShadowWorkQueue.try_dequeue(QItem))
 		{
-			;
+			
 			 {
 				SCOPE_PROFILE(ShadowRenderasync)
 				if (QItem.bUpdateTransform) {
@@ -2551,11 +2523,12 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
 		});
+		}
 
 		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 
 		
-	}
+	
 
 	while (ShadowWorkQueue.try_dequeue(QItem)) {
 		SCOPE_PROFILE(ShadowRender_2)
@@ -3683,183 +3656,217 @@ void VisualServerScene::render_probes() {
 	}
 }
 
-void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
+void VisualServerScene::_update_instance_material(Instance* p_instance)
+{
+	if (p_instance->base_type == VS::INSTANCE_MESH)
+	{
+		// remove materials no longer used and un-own them
 
-	if (p_instance->update_aabb) {
+		int new_mat_count = VSG::storage->mesh_get_surface_count(p_instance->base);
+		for (int i = p_instance->materials.size() - 1; i >= new_mat_count; i--)
+		{
+			if (p_instance->materials[i].is_valid())
+			{
+				VSG::storage->material_remove_instance_owner(p_instance->materials[i], p_instance);
+			}
+		}
+		p_instance->materials.resize(new_mat_count);
+
+		int new_blend_shape_count = VSG::storage->mesh_get_blend_shape_count(p_instance->base);
+		if (new_blend_shape_count != p_instance->blend_values.size())
+		{
+			p_instance->blend_values.resize(new_blend_shape_count);
+			for (int i = 0; i < new_blend_shape_count; i++)
+			{
+				p_instance->blend_values.write[i] = 0;
+			}
+		}
+	}
+
+	if (has_component<GeometryComponent>(p_instance->self))
+	{
+		InstanceGeometryData* geom = get_instance_geometry(p_instance->self);
+		GeometryComponent& gcomp = get_component<GeometryComponent>(p_instance->self);
+
+		bool can_cast_shadows = true;
+		bool is_animated = false;
+
+		if (p_instance->cast_shadows == VS::SHADOW_CASTING_SETTING_OFF)
+		{
+			can_cast_shadows = false;
+		}
+		else if (p_instance->material_override.is_valid())
+		{
+			can_cast_shadows = VSG::storage->material_casts_shadows(p_instance->material_override);
+			is_animated = VSG::storage->material_is_animated(p_instance->material_override);
+		}
+		else
+		{
+			if (p_instance->base_type == VS::INSTANCE_MESH)
+			{
+				RID mesh = p_instance->base;
+
+				if (mesh.is_valid())
+				{
+					bool cast_shadows = false;
+
+					for (int i = 0; i < p_instance->materials.size(); i++)
+					{
+						RID mat = p_instance->materials[i].is_valid() ? p_instance->materials[i] : VSG::storage->mesh_surface_get_material(mesh, i);
+
+						if (!mat.is_valid())
+						{
+							cast_shadows = true;
+						}
+						else
+						{
+							if (VSG::storage->material_casts_shadows(mat))
+							{
+								cast_shadows = true;
+							}
+
+							if (VSG::storage->material_is_animated(mat))
+							{
+								is_animated = true;
+							}
+						}
+					}
+
+					if (!cast_shadows)
+					{
+						can_cast_shadows = false;
+					}
+				}
+			}
+			else if (p_instance->base_type == VS::INSTANCE_MULTIMESH)
+			{
+				RID mesh = VSG::storage->multimesh_get_mesh(p_instance->base);
+				if (mesh.is_valid())
+				{
+					bool cast_shadows = false;
+
+					int sc = VSG::storage->mesh_get_surface_count(mesh);
+					for (int i = 0; i < sc; i++)
+					{
+						RID mat = VSG::storage->mesh_surface_get_material(mesh, i);
+
+						if (!mat.is_valid())
+						{
+							cast_shadows = true;
+						}
+						else
+						{
+							if (VSG::storage->material_casts_shadows(mat))
+							{
+								cast_shadows = true;
+							}
+							if (VSG::storage->material_is_animated(mat))
+							{
+								is_animated = true;
+							}
+						}
+					}
+
+					if (!cast_shadows)
+					{
+						can_cast_shadows = false;
+					}
+				}
+			}
+			else if (p_instance->base_type == VS::INSTANCE_IMMEDIATE)
+			{
+				RID mat = VSG::storage->immediate_get_material(p_instance->base);
+
+				if (!mat.is_valid() || VSG::storage->material_casts_shadows(mat))
+				{
+					can_cast_shadows = true;
+				}
+				else
+				{
+					can_cast_shadows = false;
+				}
+
+				if (mat.is_valid() && VSG::storage->material_is_animated(mat))
+				{
+					is_animated = true;
+				}
+			}
+			else if (p_instance->base_type == VS::INSTANCE_PARTICLES)
+			{
+				bool cast_shadows = false;
+
+				int dp = VSG::storage->particles_get_draw_passes(p_instance->base);
+
+				for (int i = 0; i < dp; i++)
+				{
+					RID mesh = VSG::storage->particles_get_draw_pass_mesh(p_instance->base, i);
+					if (!mesh.is_valid())
+						continue;
+
+					int sc = VSG::storage->mesh_get_surface_count(mesh);
+					for (int j = 0; j < sc; j++)
+					{
+						RID mat = VSG::storage->mesh_surface_get_material(mesh, j);
+
+						if (!mat.is_valid())
+						{
+							cast_shadows = true;
+						}
+						else
+						{
+							if (VSG::storage->material_casts_shadows(mat))
+							{
+								cast_shadows = true;
+							}
+
+							if (VSG::storage->material_is_animated(mat))
+							{
+								is_animated = true;
+							}
+						}
+					}
+				}
+
+				if (!cast_shadows)
+				{
+					can_cast_shadows = false;
+				}
+			}
+		}
+
+		if (can_cast_shadows != gcomp.can_cast_shadows)
+		{
+			// ability to cast shadows change, let lights now
+			for (List<Instance*>::Element* E = geom->lighting.front(); E; E = E->next())
+			{
+				LightComponent& light_comp = get_component<LightComponent>(E->get()->self);
+				light_comp.shadow_dirty = true;
+				// InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+				// light->shadow_dirty = true;
+			}
+
+			gcomp.can_cast_shadows = can_cast_shadows;
+		}
+
+		gcomp.material_is_animated = is_animated;
+	}
+
+}
+_FORCE_INLINE_ void VisualServerScene::_update_dirty_instance(Instance *p_instance)
+{	
+	const Dirty & dt = get_component<Dirty>(p_instance->self);
+
+	if (dt.update_aabb) {
 		_update_instance_aabb(p_instance);
 	}
 
-	if (p_instance->update_materials) {
+	if (dt.update_materials) {
 
-		if (p_instance->base_type == VS::INSTANCE_MESH) {
-			//remove materials no longer used and un-own them
-
-			int new_mat_count = VSG::storage->mesh_get_surface_count(p_instance->base);
-			for (int i = p_instance->materials.size() - 1; i >= new_mat_count; i--) {
-				if (p_instance->materials[i].is_valid()) {
-					VSG::storage->material_remove_instance_owner(p_instance->materials[i], p_instance);
-				}
-			}
-			p_instance->materials.resize(new_mat_count);
-
-			int new_blend_shape_count = VSG::storage->mesh_get_blend_shape_count(p_instance->base);
-			if (new_blend_shape_count != p_instance->blend_values.size()) {
-				p_instance->blend_values.resize(new_blend_shape_count);
-				for (int i = 0; i < new_blend_shape_count; i++) {
-					p_instance->blend_values.write[i] = 0;
-				}
-			}
-		}
-
-		if (has_component<GeometryComponent>(p_instance->self)) {
-
-			InstanceGeometryData *geom = get_instance_geometry(p_instance->self);
-			GeometryComponent & gcomp = get_component<GeometryComponent>(p_instance->self);
-			
-			bool can_cast_shadows = true;
-			bool is_animated = false;
-
-			if (p_instance->cast_shadows == VS::SHADOW_CASTING_SETTING_OFF) {
-				can_cast_shadows = false;
-			} else if (p_instance->material_override.is_valid()) {
-				can_cast_shadows = VSG::storage->material_casts_shadows(p_instance->material_override);
-				is_animated = VSG::storage->material_is_animated(p_instance->material_override);
-			} else {
-
-				if (p_instance->base_type == VS::INSTANCE_MESH) {
-					RID mesh = p_instance->base;
-
-					if (mesh.is_valid()) {
-						bool cast_shadows = false;
-
-						for (int i = 0; i < p_instance->materials.size(); i++) {
-
-							RID mat = p_instance->materials[i].is_valid() ? p_instance->materials[i] : VSG::storage->mesh_surface_get_material(mesh, i);
-
-							if (!mat.is_valid()) {
-								cast_shadows = true;
-							} else {
-
-								if (VSG::storage->material_casts_shadows(mat)) {
-									cast_shadows = true;
-								}
-
-								if (VSG::storage->material_is_animated(mat)) {
-									is_animated = true;
-								}
-							}
-						}
-
-						if (!cast_shadows) {
-							can_cast_shadows = false;
-						}
-					}
-
-				} else if (p_instance->base_type == VS::INSTANCE_MULTIMESH) {
-					RID mesh = VSG::storage->multimesh_get_mesh(p_instance->base);
-					if (mesh.is_valid()) {
-
-						bool cast_shadows = false;
-
-						int sc = VSG::storage->mesh_get_surface_count(mesh);
-						for (int i = 0; i < sc; i++) {
-
-							RID mat = VSG::storage->mesh_surface_get_material(mesh, i);
-
-							if (!mat.is_valid()) {
-								cast_shadows = true;
-
-							} else {
-
-								if (VSG::storage->material_casts_shadows(mat)) {
-									cast_shadows = true;
-								}
-								if (VSG::storage->material_is_animated(mat)) {
-									is_animated = true;
-								}
-							}
-						}
-
-						if (!cast_shadows) {
-							can_cast_shadows = false;
-						}
-					}
-				} else if (p_instance->base_type == VS::INSTANCE_IMMEDIATE) {
-
-					RID mat = VSG::storage->immediate_get_material(p_instance->base);
-
-					if (!mat.is_valid() || VSG::storage->material_casts_shadows(mat)) {
-						can_cast_shadows = true;
-					} else {
-						can_cast_shadows = false;
-					}
-
-					if (mat.is_valid() && VSG::storage->material_is_animated(mat)) {
-						is_animated = true;
-					}
-				} else if (p_instance->base_type == VS::INSTANCE_PARTICLES) {
-
-					bool cast_shadows = false;
-
-					int dp = VSG::storage->particles_get_draw_passes(p_instance->base);
-
-					for (int i = 0; i < dp; i++) {
-
-						RID mesh = VSG::storage->particles_get_draw_pass_mesh(p_instance->base, i);
-						if (!mesh.is_valid())
-							continue;
-
-						int sc = VSG::storage->mesh_get_surface_count(mesh);
-						for (int j = 0; j < sc; j++) {
-
-							RID mat = VSG::storage->mesh_surface_get_material(mesh, j);
-
-							if (!mat.is_valid()) {
-								cast_shadows = true;
-							} else {
-
-								if (VSG::storage->material_casts_shadows(mat)) {
-									cast_shadows = true;
-								}
-
-								if (VSG::storage->material_is_animated(mat)) {
-									is_animated = true;
-								}
-							}
-						}
-					}
-
-					if (!cast_shadows) {
-						can_cast_shadows = false;
-					}
-				}
-			}
-
-			if (can_cast_shadows != gcomp.can_cast_shadows) {
-				//ability to cast shadows change, let lights now
-				for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-
-					LightComponent& light_comp = get_component<LightComponent>(E->get()->self);
-					light_comp.shadow_dirty = true;
-					//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-					//light->shadow_dirty = true;
-				}
-
-				gcomp.can_cast_shadows = can_cast_shadows;
-			}
-
-			gcomp.material_is_animated = is_animated;
-		}
+		_update_instance_material(p_instance);
 	}
 
-	
-	clear_component<Dirty>(p_instance->self);
-	//_instance_update_list.remove(&p_instance->update_item);
-
 	_update_instance(p_instance);
-
-	p_instance->update_aabb = false;
-	p_instance->update_materials = false;
+	clear_component<Dirty>(p_instance->self);
 }
 
 void VisualServerScene::update_dirty_instances() {
@@ -3869,30 +3876,29 @@ void VisualServerScene::update_dirty_instances() {
 
 	auto view = VSG::ecs->registry.persistent_view<InstanceComponent, Dirty>();
 	for (auto entity : view) {
-		Instance *inst = view.get<InstanceComponent>(entity).instance;
-		_update_dirty_instance(inst);
-		
+		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+		const Dirty & dt = view.get<Dirty>(entity);
+		//_update_dirty_instance(inst);
+
+		if (dt.update_aabb) {
+			_update_instance_aabb(p_instance);
+		}
+
+		if (dt.update_materials) {
+
+			_update_instance_material(p_instance);
+		}
+
+		_update_instance(p_instance);
+		VSG::ecs->registry.remove<Dirty>(entity);
 	}
-	//while (_instance_update_list.first()) {
-	//
-	//	_update_dirty_instance(_instance_update_list.first()->self());
-	//}
+	
 }
 
 bool VisualServerScene::free(RID p_rid) {
 
-	if (VSG::ecs->registry.valid(p_rid.eid)){
-		VSG::ecs->registry.destroy(p_rid.eid);		
-	}	
-
-	/*if (camera_owner.owns(p_rid)) {
-
-		Camera *camera = camera_owner.get(p_rid);
-
-		camera_owner.free(p_rid);
-		memdelete(camera);
-
-	} else */if (scenario_owner.owns(p_rid)) {
+	
+	if (scenario_owner.owns(p_rid)) {
 
 		Scenario *scenario = scenario_owner.get(p_rid);
 
@@ -3919,12 +3925,20 @@ bool VisualServerScene::free(RID p_rid) {
 
 		update_dirty_instances(); //in case something changed this
 
+		if (VSG::ecs->registry.valid(p_rid.eid)) {
+			VSG::ecs->registry.destroy(p_rid.eid);
+		}
+
 		instance_owner.free(p_rid);
 		memdelete(instance);
 	} else {
 		return false;
+
 	}
 
+	if (VSG::ecs->registry.valid(p_rid.eid)) {
+		VSG::ecs->registry.destroy(p_rid.eid);
+	}
 	return true;
 }
 

@@ -719,7 +719,7 @@ public:
 		};
 
 		void sort_by_key(bool p_alpha) {
-
+			
 			SortArray<Element *, SortByKey> sorter;
 			if (p_alpha) {
 				sorter.sort(&elements[max_elements - alpha_element_count], alpha_element_count);
