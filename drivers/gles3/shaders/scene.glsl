@@ -165,11 +165,12 @@ uniform int spot_light_count;
 out vec4 diffuse_light_interp;
 out vec4 specular_light_interp;
 
+
 void light_compute(vec3 N, vec3 L, vec3 V, vec3 light_color, float roughness, inout vec3 diffuse, inout vec3 specular) {
 
 	float dotNL = max(dot(N, L), 0.0);
-	diffuse += dotNL * light_color / M_PI;
-
+	diffuse += dotNL * light_color / M_PI ;
+	
 	if (roughness > 0.0) {
 
 		vec3 H = normalize(V + L);
@@ -864,6 +865,30 @@ float contact_shadow_compute(vec3 pos, vec3 dir, float max_distance) {
 
 #endif
 
+const int indexMatrix4x4[16] = int[](0,  8,  2,  10,
+                                     12, 4,  14, 6,
+                                     3,  11, 1,  9,
+                                     15, 7,  13, 5);
+
+float indexValue() {
+    int x = int(mod(gl_FragCoord.x, 4));
+    int y = int(mod(gl_FragCoord.y, 4));
+    return indexMatrix4x4[(x + y * 4)] / 16.0;
+}
+
+float dither(float color) {
+    float closestColor = (color < 0.5) ? 0 : 1;
+    float secondClosestColor = 1 - closestColor;
+    float d = indexValue();
+    float distance = abs(closestColor - color);
+    return (distance < d) ? closestColor : secondClosestColor;
+}
+vec3 dither3(vec3 color){
+   float d = indexValue();
+   vec3 cc = color/32.0f;
+   return color + cc*d;
+}
+
 // This returns the G_GGX function divided by 2 cos_theta_m, where in practice cos_theta_m is either N.L or N.V.
 // We're dividing this factor off because the overall term we'll end up looks like
 // (see, for example, the first unnumbered equation in B. Burley, "Physically Based Shading at Disney", SIGGRAPH 2012):
@@ -1247,7 +1272,11 @@ void light_process_omni(int idx, vec3 vertex, vec3 eye_vec, vec3 normal, vec3 bi
 		light_attenuation *= mix(omni_lights[idx].shadow_color_contact.rgb, vec3(1.0), shadow);
 	}
 #endif //SHADOWS_DISABLED
+
 	light_compute(normal, normalize(light_rel_vec), eye_vec, binormal, tangent, omni_lights[idx].light_color_energy.rgb, light_attenuation, albedo, transmission, omni_lights[idx].light_params.z * p_blob_intensity, roughness, metallic, specular, rim * omni_attenuation, rim_tint, clearcoat, clearcoat_gloss, anisotropy, diffuse_light, specular_light);
+
+	specular_light = dither3(specular_light); 
+	diffuse_light = dither3(diffuse_light); 
 }
 
 void light_process_spot(int idx, vec3 vertex, vec3 eye_vec, vec3 normal, vec3 binormal, vec3 tangent, vec3 albedo, vec3 transmission, float roughness, float metallic, float specular, float rim, float rim_tint, float clearcoat, float clearcoat_gloss, float anisotropy, float p_blob_intensity, inout vec3 diffuse_light, inout vec3 specular_light) {

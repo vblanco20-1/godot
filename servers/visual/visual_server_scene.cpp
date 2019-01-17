@@ -43,6 +43,7 @@
 
 struct InstanceComponent {
 	VisualServerScene::Instance * instance;
+	RID self_ID;
 };
 struct Dirty {
 	//aabb stuff
@@ -101,18 +102,21 @@ struct LightComponent {
 struct DirectionalLight {
 
 };
+struct Visible {
+
+};
 
 struct InstanceBoundsComponent {
 
 	AABB aabb;
 	AABB transformed_aabb;
 	AABB custom_aabb; // <Zylann> would using aabb directly with a bool be better?
-	float extra_margin;
-	bool use_custom_aabb;
+	float extra_margin{0.0f};
+	bool use_custom_aabb{false};
 
-	InstanceBoundsComponent() {		
-		use_custom_aabb = false;
-	}	
+	//InstanceBoundsComponent() {		
+	//	use_custom_aabb = false;
+	//}	
 };
 struct ShadowWorkItem {
 	//shadowtransform
@@ -180,6 +184,19 @@ template<typename T>
 T & get_component(RID id) {
 
 	return get_component<T>(id.eid);
+}
+template<typename T>
+T & add_component(EntityID id) {
+
+	CRASH_COND(!VSG::ecs->registry.valid(id));	
+
+	return VSG::ecs->registry.assign_or_replace<T>(id);
+}
+
+template<typename T>
+T & add_component(RID id) {
+
+	return add_component<T>(id.eid);
 }
 
 template<typename T>
@@ -554,7 +571,8 @@ RID VisualServerScene::instance_create() {
 	RID instance_rid = instance_owner.make_rid(instance);
 	instance_rid.eid = VSG::ecs->registry.create();
 	instance->self = instance_rid;
-	VSG::ecs->registry.assign_or_replace<InstanceComponent>(instance_rid.eid, instance);
+	VSG::ecs->registry.assign_or_replace<InstanceComponent>(instance_rid.eid, instance,instance_rid);
+	VSG::ecs->registry.assign_or_replace<Visible>(instance_rid.eid);
 	VSG::ecs->registry.assign_or_replace<InstanceBoundsComponent>(instance_rid.eid,InstanceBoundsComponent());
 	return instance_rid;
 }
@@ -877,10 +895,18 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 	Instance *instance = instance_owner.get(p_instance);
 	ERR_FAIL_COND(!instance);
 
-	if (instance->visible == p_visible)
+	bool visible = has_component<Visible>(p_instance);
+	
+	if (visible == p_visible)
 		return;
 
-	instance->visible = p_visible;
+
+	if (p_visible) {
+		add_component<Visible>(p_instance);
+	}
+	else {
+		clear_component<Visible>(p_instance);
+	}
 
 	switch (instance->base_type) {
 		case VS::INSTANCE_LIGHT: {
@@ -948,8 +974,7 @@ void VisualServerScene::instance_set_custom_aabb(RID p_instance, AABB p_aabb) {
 
 	if (p_aabb != AABB()) {
 
-		// Set custom AABB
-		
+		// Set custom AABB		
 		bounds.custom_aabb = p_aabb;
 		bounds.use_custom_aabb = true;
 
@@ -1115,6 +1140,7 @@ void VisualServerScene::instance_geometry_set_draw_range(RID p_instance, float p
 void VisualServerScene::instance_geometry_set_as_instance_lod(RID p_instance, RID p_as_lod_of_instance) {
 }
 
+
 void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	p_instance->version++;
@@ -1128,6 +1154,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		light_comp.shadow_dirty = true;
 	}
 
+	const bool visible = has_component<Visible>(p_instance->self);
 	if (p_instance->base_type == VS::INSTANCE_REFLECTION_PROBE) {
 
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(p_instance->base_data);
@@ -1161,7 +1188,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		if (!p_instance->lightmap_capture && geom->lightmap_captures.size()) {
 			//affected by lightmap captures, must update capture info!
-			_update_instance_lightmap_captures(p_instance);
+			//_update_instance_lightmap_captures(p_instance);
 		} else {
 			if (!p_instance->lightmap_capture_data.empty()) {
 				p_instance->lightmap_capture_data.resize(0); //not in use, clear capture data
@@ -1175,6 +1202,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	new_aabb = p_instance->transform.xform(bounds.aabb);
 
+	bool sameAABB = (new_aabb==bounds.transformed_aabb);
 	bounds.transformed_aabb = new_aabb;
 
 	if (!p_instance->scenario) {
@@ -1190,13 +1218,13 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		if (p_instance->base_type == VS::INSTANCE_LIGHT || p_instance->base_type == VS::INSTANCE_REFLECTION_PROBE || p_instance->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE) {
 
-			pairable_mask = p_instance->visible ? VS::INSTANCE_GEOMETRY_MASK : 0;
+			pairable_mask = visible ? VS::INSTANCE_GEOMETRY_MASK : 0;
 			pairable = true;
 		}
 
 		if (p_instance->base_type == VS::INSTANCE_GI_PROBE) {
 			//lights and geometries
-			pairable_mask = p_instance->visible ? VS::INSTANCE_GEOMETRY_MASK | (1 << VS::INSTANCE_LIGHT) : 0;
+			pairable_mask = visible ? VS::INSTANCE_GEOMETRY_MASK | (1 << VS::INSTANCE_LIGHT) : 0;
 			pairable = true;
 		}
 
@@ -1205,10 +1233,9 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	} else {
 
-		/*
-		if (new_aabb==p_instance->data.transformed_aabb)
-			return;
-		*/
+		
+		if (sameAABB)
+			return;		
 
 		p_instance->scenario->octree.move(p_instance->octree_id, new_aabb);
 	}
@@ -1566,7 +1593,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				//CullResult.reserve(1000);
 				p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
 					
-					const bool bIsVisible = instance->visible;
+					const bool bIsVisible = has_component<Visible>(instance->self);
 					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
 					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 					
@@ -1764,7 +1791,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
 				p_scenario->octree.cull_convex_lambda(light_frustum_planes, [&](Instance* instance) {
 
-					const bool bIsVisible = instance->visible;
+					const bool bIsVisible = has_component<Visible>(instance->self);
 					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
 					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 
@@ -1834,7 +1861,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						std::vector<RasterizerScene::InstanceBase*> CullResult;
 						CullResult.reserve(1000);
 						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
-							const bool bIsVisible = instance->visible;
+							const bool bIsVisible = has_component<Visible>(instance->self);
 							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
 							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 
@@ -1898,7 +1925,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						CullResult.reserve(1000);
 						p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
 							
-							const bool bIsVisible = instance->visible;
+							const bool bIsVisible = has_component<Visible>(instance->self);
 							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
 							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
 
@@ -1953,10 +1980,12 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			std::vector<RasterizerScene::InstanceBase*> CullResult;
 			CullResult.reserve(1000);
 			p_scenario->octree.cull_convex_lambda(planes, [&](Instance* instance) {
-				if (!instance->visible || !has_component<GeometryComponent>(instance->self) || !get_component<GeometryComponent>(instance->self).can_cast_shadows) {
-					
-				}
-				else {
+				
+				const bool bIsVisible = has_component<Visible>(instance->self);
+				const bool bIsMesh = has_component<GeometryComponent>(instance->self);
+				const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+
+				if (bIsVisible && bIsMesh && bIsShadowcaster) {
 					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
 						animated_material_found = true;
 					}
@@ -2134,6 +2163,7 @@ struct ShadowUpdateWork {
 	//VisualServerScene::InstanceLightData * light;
 
 };
+
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
 
 	SCOPE_PROFILE(prepare_scene);
@@ -2175,18 +2205,49 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	/* STEP 4 - REMOVE FURTHER CULLED OBJECTS, ADD LIGHTS */
 
+	//cull_lights
+	auto &reg = VSG::ecs->registry;
+	auto light_view = reg.persistent_view<InstanceBoundsComponent,LightComponent,Visible,InstanceComponent>();
+	for (auto entity : light_view) {
+		//e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)
+			InstanceBoundsComponent& bound_comp = light_view.get<InstanceBoundsComponent>(entity);
+
+		bool is_in_frustrum = bound_comp.transformed_aabb.intersects_convex_shape(&planes[0], 6);
+
+		if (light_cull_count < MAX_LIGHTS_CULLED && is_in_frustrum ) {
+
+			LightComponent& light_comp = light_view.get<LightComponent>(entity);
+			InstanceComponent& inst_comp = light_view.get<InstanceComponent>(entity);
+			InstanceLightData *light = light_comp.Data;
+			Instance* ins = inst_comp.instance;
+
+			if (!light->geometries.empty()) {
+				//do not add this light if no geometry is affected by it..
+				light_cull_result[light_cull_count] = ins;
+				light_instance_cull_result[light_cull_count] = light->instance;
+				if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(ins->base)) {
+					VSG::scene_render->light_instance_mark_visible(light->instance); //mark it visible for shadow allocation later
+				}
+
+				light_cull_count++;
+			}
+		}		
+	}
+
 	for (int i = 0; i < instance_cull_count; i++) {
 
 		Instance *ins = instance_cull_result[i];
+		const bool bIsVisible = has_component<Visible>(ins->self);
+		
 
 		bool keep = false;
 
 		if ((camera_layer_mask & ins->layer_mask) == 0) {
 
 			//failure
-		} else if (has_component<LightComponent>(ins->self) &&/*ins->base_type == VS::INSTANCE_LIGHT && */ins->visible) {
+		} /*else if (has_component<LightComponent>(ins->self) &&/ *ins->base_type == VS::INSTANCE_LIGHT && * /bIsVisible) {
 
-			if (ins->visible && light_cull_count < MAX_LIGHTS_CULLED) {
+			if (light_cull_count < MAX_LIGHTS_CULLED) {
 
 				LightComponent& light_comp = get_component<LightComponent>(ins->self);
 				InstanceLightData *light = light_comp.Data;
@@ -2202,9 +2263,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					light_cull_count++;
 				}
 			}
-		} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE && ins->visible) {
+		}*/ else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE && bIsVisible) {
 
-			if (ins->visible && reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
+			if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
 
 				InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(ins->base_data);
 
@@ -2231,14 +2292,14 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 			}
 
-		} else if (ins->base_type == VS::INSTANCE_GI_PROBE && ins->visible) {
+		} else if (ins->base_type == VS::INSTANCE_GI_PROBE && bIsVisible) {
 
 			InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
 			if (!gi_probe->update_element.in_list()) {
 				gi_probe_update_list.add(&gi_probe->update_element);
 			}
 
-		} else if (has_component<GeometryComponent>(ins->self) && ins->visible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+		} else if (has_component<GeometryComponent>(ins->self) && bIsVisible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
 
 			//get_component<GeometryComponent>(ins->self).
 
@@ -2336,30 +2397,35 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * scenario->directional_lights.size());
 		int directional_shadow_count = 0;
 
-		for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
+		auto directional_lights = VSG::ecs->registry.persistent_view<DirectionalLight,LightComponent,InstanceComponent,Visible>();
+
+		for(EntityID lightID : directional_lights){
+		//for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
+
+			InstanceComponent& ic = directional_lights.get<InstanceComponent>(lightID);
 
 			if (light_cull_count + directional_light_count >= MAX_LIGHTS_CULLED) {
 				break;
 			}
+			//we already match visibility
 
-			if (!E->get()->visible)
-				continue;
+			//if (!ic.instance->visible)
+			//	continue;
 
-			InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+			//InstanceLightData *light = directional_lights.get<LightComponent>(lightID).Data;
 
 			//check shadow..
 
-			if (light) {
-				if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(E->get()->base)) {
-					lights_with_shadow[directional_shadow_count++] = E->get();
-				}
-				//add to list
-				directional_light_ptr[directional_light_count++] = light->instance;
+			//if (light) {
+			if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(ic.self_ID)) {
+				lights_with_shadow[directional_shadow_count++] = ic.instance;
 			}
+			//add to list
+			directional_light_ptr[directional_light_count++] = ic.self_ID;
+			//}
 		}
 
 		VSG::scene_render->set_directional_shadow_count(directional_shadow_count);
-
 	
 		for (int i = 0; i < directional_shadow_count; i++) {
 			ShadowUpdateWork work;
@@ -3518,7 +3584,7 @@ bool VisualServerScene::_check_gi_probe(Instance *p_gi_probe) {
 		lc.spot_angle = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ANGLE);
 		lc.spot_attenuation = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ATTENUATION);
 		lc.transform = probe_data->dynamic.light_to_cell_xform * E->get()->transform;
-		lc.visible = E->get()->visible;
+		lc.visible = has_component<Visible>(E->get()->self);
 
 		if (!probe_data->dynamic.light_cache.has(E->get()->self) || probe_data->dynamic.light_cache[E->get()->self] != lc) {
 			all_equal = false;
@@ -3538,7 +3604,7 @@ bool VisualServerScene::_check_gi_probe(Instance *p_gi_probe) {
 		lc.spot_angle = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ANGLE);
 		lc.spot_attenuation = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ATTENUATION);
 		lc.transform = probe_data->dynamic.light_to_cell_xform * E->get()->transform;
-		lc.visible = E->get()->visible;
+		lc.visible = has_component<Visible>(E->get()->self);
 
 		if (!probe_data->dynamic.light_cache.has(E->get()->self) || probe_data->dynamic.light_cache[E->get()->self] != lc) {
 			all_equal = false;
@@ -3904,16 +3970,27 @@ void VisualServerScene::update_dirty_instances() {
 				_update_instance_aabb(p_instance);
 			}
 
-			if (dt.update_materials) {
-				_update_instance_material(p_instance);
-			}
-
-			_update_instance(p_instance);
+			//if (dt.update_materials) {
+			//	_update_instance_material(p_instance);
+			//}
+			//
+			//_update_instance(p_instance);
 
 			
 		}
 		//remove dirty for everything
-		VSG::ecs->registry.reset<Dirty>();
+		
+	}
+	{
+		SCOPE_PROFILE(update_materials);
+		for (auto entity : view) {
+			Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+			const Dirty & dt = view.get<Dirty>(entity);
+
+			if (dt.update_materials) {
+				_update_instance_material(p_instance);
+			}
+		}
 	}
 
 
@@ -3929,17 +4006,18 @@ void VisualServerScene::update_dirty_instances() {
 	//	}
 	//}	
 	//
-	//{
-	//	SCOPE_PROFILE(update_inst);
-	//	for (auto entity : view) {
-	//		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
-	//		const Dirty & dt = view.get<Dirty>(entity);
-	//
-	//		_update_instance(p_instance);
-	//
-	//		VSG::ecs->registry.remove<Dirty>(entity);
-	//	}
-	//}
+	{
+	SCOPE_PROFILE(update_inst);
+	for (auto entity : view) {
+		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+		const Dirty & dt = view.get<Dirty>(entity);
+
+		_update_instance(p_instance);
+
+		//VSG::ecs->registry.remove<Dirty>(entity);
+	}
+	VSG::ecs->registry.reset<Dirty>();
+}
 }
 
 bool VisualServerScene::free(RID p_rid) {

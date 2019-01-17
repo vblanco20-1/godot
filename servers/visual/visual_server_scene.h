@@ -209,7 +209,7 @@ public:
 			//extra_margin = 0;
 
 			object_ID = 0;
-			visible = true;
+			//visible = true;
 
 			lod_begin = 0;
 			lod_end = 0;
