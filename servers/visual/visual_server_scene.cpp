@@ -102,6 +102,18 @@ struct DirectionalLight {
 
 };
 
+struct InstanceBoundsComponent {
+
+	AABB aabb;
+	AABB transformed_aabb;
+	AABB custom_aabb; // <Zylann> would using aabb directly with a bool be better?
+	float extra_margin;
+	bool use_custom_aabb;
+
+	InstanceBoundsComponent() {		
+		use_custom_aabb = false;
+	}	
+};
 struct ShadowWorkItem {
 	//shadowtransform
 	bool bUpdateTransform{false};
@@ -149,16 +161,12 @@ VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
 	return nullptr;
 }
 template<typename T>
-bool has_component(RID id) {
-	return VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<T>(id.eid);
+bool has_component(EntityID id) {
+	return VSG::ecs->registry.valid(id) && VSG::ecs->registry.has<T>(id);
 }
 template<typename T>
-T & get_component(RID id) {
-
-	CRASH_COND(!VSG::ecs->registry.valid(id.eid) );
-	CRASH_COND(!VSG::ecs->registry.has<T>(id.eid) );
-	
-	return VSG::ecs->registry.get<T>(id.eid);
+bool has_component(RID id) {
+	return has_component<T>(id.eid);
 }
 template<typename T>
 T & get_component(EntityID id) {
@@ -169,12 +177,34 @@ T & get_component(EntityID id) {
 	return VSG::ecs->registry.get<T>(id);
 }
 template<typename T>
+T & get_component(RID id) {
+
+	return get_component<T>(id.eid);
+}
+
+template<typename T>
 void clear_component(RID id) {
 	if (VSG::ecs->registry.valid(id.eid) && VSG::ecs->registry.has<T>(id.eid))
 	{
-		VSG::ecs->registry.remove<T>(id.eid);
+		VSG::ecs->registry.remove<T>(id.eid);		
 	}
 }
+
+
+void set_dirty(RID id, bool p_update_aabb, bool p_update_materials) {
+
+	auto &reg = VSG::ecs->registry;
+	if (!has_component<Dirty>(id.eid)) {
+		reg.assign_or_replace<Dirty>(id.eid, Dirty());
+	}
+
+
+	if (p_update_aabb)
+		get_component<Dirty>(id.eid).update_aabb = true;
+	if (p_update_materials)
+		get_component<Dirty>(id.eid).update_materials = true;
+}
+
 RID VisualServerScene::camera_create() {
 	auto eid = VSG::ecs->registry.create();
 	VSG::ecs->registry.assign<Camera>(eid, Camera());
@@ -511,25 +541,8 @@ void VisualServerScene::scenario_set_reflection_atlas_size(RID p_scenario, int p
 void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials) {
 
 	
-
-	auto &reg = VSG::ecs->registry;
-	if (!has_component<Dirty>(p_instance->self)) {
-		reg.assign_or_replace<Dirty>(p_instance->self.eid,Dirty());
-	}
+	set_dirty(p_instance->self,p_update_aabb,p_update_materials);
 	
-
-	if (p_update_aabb)
-		get_component<Dirty>(p_instance->self.eid).update_aabb = true;
-	if (p_update_materials)
-		get_component<Dirty>(p_instance->self.eid).update_materials = true;
-
-	
-
-
-	//if (p_instance->update_item.in_list())
-	//	return;
-	//
-	//_instance_update_list.add(&p_instance->update_item);
 }
 
 // from can be mesh, light,  area and portal so far.
@@ -542,7 +555,7 @@ RID VisualServerScene::instance_create() {
 	instance_rid.eid = VSG::ecs->registry.create();
 	instance->self = instance_rid;
 	VSG::ecs->registry.assign_or_replace<InstanceComponent>(instance_rid.eid, instance);
-
+	VSG::ecs->registry.assign_or_replace<InstanceBoundsComponent>(instance_rid.eid,InstanceBoundsComponent());
 	return instance_rid;
 }
 
@@ -931,20 +944,18 @@ void VisualServerScene::instance_set_custom_aabb(RID p_instance, AABB p_aabb) {
 	ERR_FAIL_COND(!instance);
 	ERR_FAIL_COND(!is_geometry_instance(instance->base_type));
 
+	InstanceBoundsComponent& bounds = get_component<InstanceBoundsComponent>(p_instance);
+
 	if (p_aabb != AABB()) {
 
 		// Set custom AABB
-		if (instance->custom_aabb == NULL)
-			instance->custom_aabb = memnew(AABB);
-		*instance->custom_aabb = p_aabb;
+		
+		bounds.custom_aabb = p_aabb;
+		bounds.use_custom_aabb = true;
 
 	} else {
 
-		// Clear custom AABB
-		if (instance->custom_aabb != NULL) {
-			memdelete(instance->custom_aabb);
-			instance->custom_aabb = NULL;
-		}
+		bounds.use_custom_aabb = false;
 	}
 
 	if (instance->scenario)
@@ -979,7 +990,8 @@ void VisualServerScene::instance_set_extra_visibility_margin(RID p_instance, rea
 	Instance *instance = instance_owner.get(p_instance);
 	ERR_FAIL_COND(!instance);
 
-	instance->extra_margin = p_margin;
+	InstanceBoundsComponent& bounds = get_component<InstanceBoundsComponent>(p_instance);
+	bounds.extra_margin = p_margin;
 	_instance_queue_update(instance, true, false);
 }
 
@@ -1106,7 +1118,7 @@ void VisualServerScene::instance_geometry_set_as_instance_lod(RID p_instance, RI
 void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	p_instance->version++;
-
+	InstanceBoundsComponent& bounds = get_component<InstanceBoundsComponent>(p_instance->self);
 	if (has_component<LightComponent>(p_instance->self)) {
 
 		LightComponent& light_comp = get_component<LightComponent>(p_instance->self);
@@ -1129,7 +1141,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		VSG::storage->particles_set_emission_transform(p_instance->base, p_instance->transform);
 	}
 
-	if (p_instance->aabb.has_no_surface()) {
+	if (bounds.aabb.has_no_surface()) {
 		return;
 	}
 
@@ -1161,9 +1173,9 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	AABB new_aabb;
 
-	new_aabb = p_instance->transform.xform(p_instance->aabb);
+	new_aabb = p_instance->transform.xform(bounds.aabb);
 
-	p_instance->transformed_aabb = new_aabb;
+	bounds.transformed_aabb = new_aabb;
 
 	if (!p_instance->scenario) {
 
@@ -1203,10 +1215,11 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 }
 
 void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
-
 	AABB new_aabb;
 
 	ERR_FAIL_COND(p_instance->base_type != VS::INSTANCE_NONE && !p_instance->base.is_valid());
+
+	InstanceBoundsComponent& bounds = get_component<InstanceBoundsComponent>(p_instance->self);
 
 	switch (p_instance->base_type) {
 		case VisualServer::INSTANCE_NONE: {
@@ -1215,8 +1228,8 @@ void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
 		} break;
 		case VisualServer::INSTANCE_MESH: {
 
-			if (p_instance->custom_aabb)
-				new_aabb = *p_instance->custom_aabb;
+			if (bounds.use_custom_aabb)
+				new_aabb = bounds.custom_aabb;
 			else
 				new_aabb = VSG::storage->mesh_get_aabb(p_instance->base, p_instance->skeleton);
 
@@ -1224,24 +1237,24 @@ void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
 
 		case VisualServer::INSTANCE_MULTIMESH: {
 
-			if (p_instance->custom_aabb)
-				new_aabb = *p_instance->custom_aabb;
+			if (bounds.use_custom_aabb)
+				new_aabb = bounds.custom_aabb;
 			else
 				new_aabb = VSG::storage->multimesh_get_aabb(p_instance->base);
 
 		} break;
 		case VisualServer::INSTANCE_IMMEDIATE: {
 
-			if (p_instance->custom_aabb)
-				new_aabb = *p_instance->custom_aabb;
+			if (bounds.use_custom_aabb)
+				new_aabb = bounds.custom_aabb;
 			else
 				new_aabb = VSG::storage->immediate_get_aabb(p_instance->base);
 
 		} break;
 		case VisualServer::INSTANCE_PARTICLES: {
 
-			if (p_instance->custom_aabb)
-				new_aabb = *p_instance->custom_aabb;
+			if (bounds.use_custom_aabb)
+				new_aabb = bounds.custom_aabb;
 			else
 				new_aabb = VSG::storage->particles_get_aabb(p_instance->base);
 
@@ -1270,10 +1283,10 @@ void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
 	}
 
 	// <Zylann> This is why I didn't re-use Instance::aabb to implement custom AABBs
-	if (p_instance->extra_margin)
-		new_aabb.grow_by(p_instance->extra_margin);
+	if (bounds.extra_margin)
+		new_aabb.grow_by(bounds.extra_margin);
 
-	p_instance->aabb = new_aabb;
+	bounds.aabb = new_aabb;
 }
 
 
@@ -1564,7 +1577,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						}
 
 						float max, min;
-						instance->transformed_aabb.project_range_in_plane(base, min, max);
+						get_component<InstanceBoundsComponent>(instance->self).transformed_aabb.project_range_in_plane(base, min, max);
 						
 						z_max = MAX(z_max, max);
 
@@ -1760,7 +1773,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						float min, max;
 						//Instance *instance = instance_shadow_cull_result[j];						
 
-						instance->transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
+						get_component<InstanceBoundsComponent>(instance->self).transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
 						instance->depth = near_plane.distance_to(instance->transform.origin);
 						instance->depth_layer = 0;
 						if (max > z_max)
@@ -3872,27 +3885,61 @@ _FORCE_INLINE_ void VisualServerScene::_update_dirty_instance(Instance *p_instan
 void VisualServerScene::update_dirty_instances() {
 
 	SCOPE_PROFILE(update_dirty_instances);
-	VSG::storage->update_dirty_resources();
+
+	{
+		SCOPE_PROFILE(update_resources);
+		VSG::storage->update_dirty_resources();
+	}
 
 	auto view = VSG::ecs->registry.persistent_view<InstanceComponent, Dirty>();
-	for (auto entity : view) {
-		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
-		const Dirty & dt = view.get<Dirty>(entity);
-		//_update_dirty_instance(inst);
 
-		if (dt.update_aabb) {
-			_update_instance_aabb(p_instance);
+	{
+		SCOPE_PROFILE(update_aabbs);
+
+		for (auto entity : view) {
+			Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+			const Dirty & dt = view.get<Dirty>(entity);			
+
+			if (dt.update_aabb) {
+				_update_instance_aabb(p_instance);
+			}
+
+			if (dt.update_materials) {
+				_update_instance_material(p_instance);
+			}
+
+			_update_instance(p_instance);
+
+			
 		}
-
-		if (dt.update_materials) {
-
-			_update_instance_material(p_instance);
-		}
-
-		_update_instance(p_instance);
-		VSG::ecs->registry.remove<Dirty>(entity);
+		//remove dirty for everything
+		VSG::ecs->registry.reset<Dirty>();
 	}
-	
+
+
+	//{
+	//	SCOPE_PROFILE(update_materials);
+	//	for (auto entity : view) {
+	//		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+	//		const Dirty & dt = view.get<Dirty>(entity);			
+	//
+	//		if (dt.update_materials) {
+	//			_update_instance_material(p_instance);
+	//		}
+	//	}
+	//}	
+	//
+	//{
+	//	SCOPE_PROFILE(update_inst);
+	//	for (auto entity : view) {
+	//		Instance *p_instance = view.get<InstanceComponent>(entity).instance;
+	//		const Dirty & dt = view.get<Dirty>(entity);
+	//
+	//		_update_instance(p_instance);
+	//
+	//		VSG::ecs->registry.remove<Dirty>(entity);
+	//	}
+	//}
 }
 
 bool VisualServerScene::free(RID p_rid) {

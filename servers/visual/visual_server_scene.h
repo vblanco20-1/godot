@@ -170,10 +170,7 @@ public:
 
 		//SelfList<Instance> update_item;
 
-		AABB aabb;
-		AABB transformed_aabb;
-		AABB *custom_aabb; // <Zylann> would using aabb directly with a bool be better?
-		float extra_margin;
+		
 		uint32_t object_ID;
 
 		float lod_begin;
@@ -209,7 +206,7 @@ public:
 			//update_aabb = false;
 			//update_materials = false;
 
-			extra_margin = 0;
+			//extra_margin = 0;
 
 			object_ID = 0;
 			visible = true;
@@ -224,15 +221,14 @@ public:
 			version = 1;
 			base_data = NULL;
 
-			custom_aabb = NULL;
+			//custom_aabb = NULL;
 		}
 
 		~Instance() {
 
 			if (base_data)
 				memdelete(base_data);
-			if (custom_aabb)
-				memdelete(custom_aabb);
+			
 		}
 	};
 
@@ -257,14 +253,14 @@ public:
 
 		
 
-		InstanceGeometryData() {
-
-			//lighting_dirty = false;
-			//reflection_dirty = true;
-			//can_cast_shadows = true;
-			//material_is_animated = true;
-			//gi_probes_dirty = true;
-		}
+		//InstanceGeometryData() {
+		//
+		//	//lighting_dirty = false;
+		//	//reflection_dirty = true;
+		//	//can_cast_shadows = true;
+		//	//material_is_animated = true;
+		//	//gi_probes_dirty = true;
+		//}
 	};
 
 	struct InstanceReflectionProbeData : public InstanceBaseData {
