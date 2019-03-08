@@ -37,7 +37,7 @@
 #include "core/math/vector3.h"
 #include "core/print_string.h"
 #include "core/variant.h"
-
+#include "thirdparty/tracy/Tracy.hpp"
 /**
 	@author Juan Linietsky <reduzio@gmail.com>
 */
@@ -384,6 +384,13 @@ public:
 	int cull_aabb(const AABB &p_aabb, T **p_result_array, int p_result_max, int *p_subindex_array = NULL, uint32_t p_mask = 0xFFFFFFFF);
 	int cull_segment(const Vector3 &p_from, const Vector3 &p_to, T **p_result_array, int p_result_max, int *p_subindex_array = NULL, uint32_t p_mask = 0xFFFFFFFF);
 
+	
+	template <typename F>
+	void cull_convex_lambda(const Vector<Plane> &p_convex, F &&functor, uint32_t p_mask = 0xFFFFFFFF);
+	template <typename F>
+	void _cull_convex_lambda(Octant *p_octant, F &&functor, _CullConvexData *p_cull);
+
+
 	int cull_point(const Vector3 &p_point, T **p_result_array, int p_result_max, int *p_subindex_array = NULL, uint32_t p_mask = 0xFFFFFFFF);
 
 	void set_pair_callback(PairCallback p_callback, void *p_userdata);
@@ -394,6 +401,8 @@ public:
 	Octree(real_t p_unit_size = 1.0);
 	~Octree() { _remove_tree(root); }
 };
+
+
 
 /* PRIVATE FUNCTIONS */
 
@@ -424,7 +433,7 @@ int Octree<T, use_pairs, AL>::get_subindex(OctreeElementID p_id) const {
 
 template <class T, bool use_pairs, class AL>
 void Octree<T, use_pairs, AL>::_insert_element(Element *p_element, Octant *p_octant) {
-
+	ZoneScoped;
 	real_t element_size = p_element->aabb.get_longest_axis_size() * 1.01; // avoid precision issues
 
 	if (p_octant->aabb.size.x / OCTREE_DIVISOR < element_size) {
@@ -835,7 +844,7 @@ OctreeElementID Octree<T, use_pairs, AL>::create(T *p_userdata, const AABB &p_aa
 
 template <class T, bool use_pairs, class AL>
 void Octree<T, use_pairs, AL>::move(OctreeElementID p_id, const AABB &p_aabb) {
-
+	ZoneScoped;
 #ifdef DEBUG_ENABLED
 	// check for AABB validity
 	ERR_FAIL_COND(p_aabb.position.x > 1e15 || p_aabb.position.x < -1e15);
@@ -1005,6 +1014,74 @@ void Octree<T, use_pairs, AL>::erase(OctreeElementID p_id) {
 	_optimize();
 }
 
+template <class T, bool use_pairs, class AL>
+template <typename F>
+void Octree<T, use_pairs, AL>::cull_convex_lambda(const Vector<Plane> &p_convex, F &&functor, uint32_t p_mask /*= 0xFFFFFFFF*/) {
+	if (!root)
+		return;
+
+	pass++;
+	_CullConvexData cdata;
+	cdata.planes = &p_convex[0];
+	cdata.plane_count = p_convex.size();
+	cdata.result_array = nullptr;
+	cdata.result_max = 0;
+	cdata.result_idx = nullptr;
+	cdata.mask = p_mask;
+
+	_cull_convex_lambda(root, functor, &cdata);
+}
+
+template <class T, bool use_pairs, class AL>
+template <typename F>
+void Octree<T, use_pairs, AL>::_cull_convex_lambda(Octant *p_octant, F &&functor, _CullConvexData *p_cull) {
+	if (!p_octant->elements.empty()) {
+
+		typename List<Element *, AL>::Element *I;
+		I = p_octant->elements.front();
+
+		for (; I; I = I->next()) {
+
+			Element *e = I->get();
+
+			if (/*e->last_pass == pass || */ (use_pairs && !(e->pairable_type & p_cull->mask)))
+				continue;
+			//e->last_pass = pass;
+
+			if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+
+				functor(e->userdata);
+			}
+		}
+	}
+
+	if (use_pairs && !p_octant->pairable_elements.empty()) {
+
+		typename List<Element *, AL>::Element *I;
+		I = p_octant->pairable_elements.front();
+
+		for (; I; I = I->next()) {
+
+			Element *e = I->get();
+
+			if (/*e->last_pass == pass || */ (use_pairs && !(e->pairable_type & p_cull->mask)))
+				continue;
+			//e->last_pass = pass;
+
+			if (e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+
+				functor(e->userdata);
+			}
+		}
+	}
+
+	for (int i = 0; i < 8; i++) {
+
+		if (p_octant->children[i] && p_octant->children[i]->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
+			_cull_convex_lambda(p_octant->children[i], functor, p_cull);
+		}
+	}
+}
 template <class T, bool use_pairs, class AL>
 void Octree<T, use_pairs, AL>::_cull_convex(Octant *p_octant, _CullConvexData *p_cull) {
 
@@ -1294,7 +1371,7 @@ void Octree<T, use_pairs, AL>::_cull_point(Octant *p_octant, const Vector3 &p_po
 
 template <class T, bool use_pairs, class AL>
 int Octree<T, use_pairs, AL>::cull_convex(const Vector<Plane> &p_convex, T **p_result_array, int p_result_max, uint32_t p_mask) {
-
+	ZoneScoped;
 	if (!root)
 		return 0;
 
@@ -1315,7 +1392,7 @@ int Octree<T, use_pairs, AL>::cull_convex(const Vector<Plane> &p_convex, T **p_r
 
 template <class T, bool use_pairs, class AL>
 int Octree<T, use_pairs, AL>::cull_aabb(const AABB &p_aabb, T **p_result_array, int p_result_max, int *p_subindex_array, uint32_t p_mask) {
-
+	ZoneScoped;
 	if (!root)
 		return 0;
 
@@ -1328,7 +1405,7 @@ int Octree<T, use_pairs, AL>::cull_aabb(const AABB &p_aabb, T **p_result_array, 
 
 template <class T, bool use_pairs, class AL>
 int Octree<T, use_pairs, AL>::cull_segment(const Vector3 &p_from, const Vector3 &p_to, T **p_result_array, int p_result_max, int *p_subindex_array, uint32_t p_mask) {
-
+	ZoneScoped;
 	if (!root)
 		return 0;
 

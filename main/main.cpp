@@ -77,7 +77,7 @@
 #include "editor/editor_settings.h"
 #include "editor/project_manager.h"
 #endif
-
+#include "thirdparty/tracy/Tracy.hpp"
 /* Static members */
 
 // Singletons
@@ -326,6 +326,7 @@ void Main::print_help(const char *p_binary) {
  */
 
 Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_phase) {
+	ZoneScoped;
 	RID_OwnerBase::init_rid();
 
 	OS::get_singleton()->initialize_core();
@@ -1807,7 +1808,7 @@ static uint64_t physics_process_max = 0;
 static uint64_t idle_process_max = 0;
 
 bool Main::iteration() {
-
+	ZoneScoped;
 	//for now do not error on this
 	//ERR_FAIL_COND_V(iterating, false);
 

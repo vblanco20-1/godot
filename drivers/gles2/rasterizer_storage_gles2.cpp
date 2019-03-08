@@ -5468,6 +5468,7 @@ void RasterizerStorageGLES2::_copy_screen() {
 }
 
 void RasterizerStorageGLES2::update_dirty_resources() {
+
 	update_dirty_shaders();
 	update_dirty_materials();
 	update_dirty_skeletons();

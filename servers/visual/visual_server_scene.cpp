@@ -33,6 +33,7 @@
 #include "visual_server_globals.h"
 #include "visual_server_raster.h"
 #include <new>
+#include "thirdparty/tracy/Tracy.hpp"
 /* CAMERA API */
 
 RID VisualServerScene::camera_create() {
@@ -293,6 +294,7 @@ void VisualServerScene::scenario_set_reflection_atlas_size(RID p_scenario, int p
 
 void VisualServerScene::_instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials) {
 
+	ZoneScoped;
 	if (p_update_aabb)
 		p_instance->update_aabb = true;
 	if (p_update_materials)
@@ -881,7 +883,7 @@ void VisualServerScene::instance_geometry_set_as_instance_lod(RID p_instance, RI
 }
 
 void VisualServerScene::_update_instance(Instance *p_instance) {
-
+	ZoneScoped;
 	p_instance->version++;
 
 	if (p_instance->base_type == VS::INSTANCE_LIGHT) {
@@ -977,7 +979,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 }
 
 void VisualServerScene::_update_instance_aabb(Instance *p_instance) {
-
+	ZoneScoped;
 	AABB new_aabb;
 
 	ERR_FAIL_COND(p_instance->base_type != VS::INSTANCE_NONE && !p_instance->base.is_valid());
@@ -1231,7 +1233,7 @@ _FORCE_INLINE_ static Color _light_capture_voxel_cone_trace(const RasterizerStor
 }
 
 void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance) {
-
+	ZoneScoped;
 	InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 
 	static const Vector3 cone_traces[12] = {
@@ -1691,6 +1693,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 }
 
 void VisualServerScene::render_camera(RID p_camera, RID p_scenario, Size2 p_viewport_size, RID p_shadow_atlas) {
+	ZoneScoped;
 // render to mono camera
 #ifndef _3D_DISABLED
 
@@ -1818,7 +1821,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	// Note, in stereo rendering:
 	// - p_cam_transform will be a transform in the middle of our two eyes
 	// - p_cam_projection is a wider frustrum that encompasses both eyes
-
+	ZoneScoped;
 	Scenario *scenario = scenario_owner.getornull(p_scenario);
 
 	render_pass++;
@@ -1836,7 +1839,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	/* STEP 2 - CULL */
 	instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
 	light_cull_count = 0;
-
+	TracyPlot("FrustrumInstances", (int64_t)instance_cull_count);
 	reflection_probe_cull_count = 0;
 
 	//light_samplers_culled=0;
@@ -2141,7 +2144,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 }
 
 void VisualServerScene::_render_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-
+	ZoneScoped;
 	Scenario *scenario = scenario_owner.getornull(p_scenario);
 
 	/* ENVIRONMENT */
@@ -3250,7 +3253,7 @@ void VisualServerScene::render_probes() {
 }
 
 void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
-
+	ZoneScoped;
 	if (p_instance->update_aabb) {
 		_update_instance_aabb(p_instance);
 	}
@@ -3423,7 +3426,7 @@ void VisualServerScene::_update_dirty_instance(Instance *p_instance) {
 }
 
 void VisualServerScene::update_dirty_instances() {
-
+	ZoneScoped;
 	VSG::storage->update_dirty_resources();
 
 	while (_instance_update_list.first()) {
