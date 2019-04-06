@@ -2212,7 +2212,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	//cull_lights
 	auto &reg = VSG::ecs->registry;
-	auto light_view = reg.persistent_view<InstanceBoundsComponent,LightComponent,Visible,InstanceComponent>();
+	auto light_view = reg.group<>(entt::get<InstanceBoundsComponent,LightComponent,Visible,InstanceComponent>);
 	for (auto entity : light_view) {
 		//e->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)
 			InstanceBoundsComponent& bound_comp = light_view.get<InstanceBoundsComponent>(entity);
@@ -2249,8 +2249,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		//#TODO this should be a ecs query
 		
 		int directional_shadow_count = 0;
-
-		auto directional_lights = VSG::ecs->registry.persistent_view<DirectionalLight, LightComponent, InstanceComponent, Visible>();
+		//reg.group<>(entt::get<InstanceBoundsComponent, LightComponent, Visible, InstanceComponent>);
+		auto directional_lights = VSG::ecs->registry.group<>(entt::get<DirectionalLight, LightComponent, InstanceComponent, Visible>);
 		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * directional_lights.size());
 		for (EntityID lightID : directional_lights) {
 			//for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
@@ -3571,7 +3571,7 @@ bool VisualServerScene::_check_gi_probe(Instance *p_gi_probe) {
 	bool all_equal = true;
 
 	auto &reg = VSG::ecs->registry;
-	auto light_view = reg.persistent_view<InstanceBoundsComponent, LightComponent,InstanceComponent>();
+	auto light_view = reg.group<>(entt::get<InstanceBoundsComponent, LightComponent,InstanceComponent>);
 
 	
 	for (auto et : light_view){//List<Instance *>::Element *E = p_gi_probe->scenario->directional_lights.front(); E; E = E->next()) {
@@ -3959,7 +3959,7 @@ void VisualServerScene::update_dirty_instances() {
 		VSG::storage->update_dirty_resources();
 	}
 
-	auto view = VSG::ecs->registry.persistent_view<InstanceComponent, Dirty>();
+	auto view = VSG::ecs->registry.group<>(entt::get<InstanceComponent, Dirty>);
 
 	{
 		SCOPE_PROFILE(update_aabbs);
