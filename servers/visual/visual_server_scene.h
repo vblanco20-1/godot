@@ -126,7 +126,7 @@ public:
 
 		Octree<Instance, true> octree;
 
-		List<Instance *> directional_lights;
+		//List<Instance *> directional_lights;
 		RID environment;
 		RID fallback_environment;
 		RID reflection_probe_shadow_atlas;
@@ -297,20 +297,20 @@ public:
 		};
 
 		RID instance;
-		uint64_t last_version;
-		List<Instance *>::Element *D; // directional light in scenario
+		
+		//List<Instance *>::Element *D; // directional light in scenario
 
 		
 
 		List<PairInfo> geometries;
 
-		Instance *baked_light;
+		//Instance *baked_light;
 
 		InstanceLightData() {
 
 			//shadow_dirty = true;
-			D = NULL;
-			last_version = 0;
+			//D = NULL;
+			//last_version = 0;
 			//baked_light = NULL;
 		}
 	};

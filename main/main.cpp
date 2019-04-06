@@ -81,7 +81,7 @@
 #endif
 
 /* Static members */
-Remotery* g_Remotery = nullptr;
+
 // Singletons
 
 // Initialized in setup()

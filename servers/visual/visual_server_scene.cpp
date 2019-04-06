@@ -86,7 +86,7 @@ struct LightComponent {
 
 	bool shadow_dirty;
 	VisualServerScene::Instance *baked_light;
-
+	uint64_t last_version;
 	LightComponent() {
 		Data = nullptr;
 		shadow_dirty = true;
@@ -97,6 +97,7 @@ struct LightComponent {
 		shadow_dirty = true;
 		baked_light = nullptr;
 		Data = _Data;
+		last_version=0;
 	}
 };
 struct DirectionalLight {
@@ -616,9 +617,13 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 				InstanceLightData *light = static_cast<InstanceLightData *>(instance->base_data);
 
-				if (instance->scenario && light->D) {
-					instance->scenario->directional_lights.erase(light->D);
-					light->D = NULL;
+				//if (instance->scenario && light->D) {
+				//	instance->scenario->directional_lights.erase(light->D);
+				//	light->D = NULL;
+				//	clear_component<DirectionalLight>(instance->self);
+				//}
+				if (has_component<DirectionalLight>(instance->self))
+				{
 					clear_component<DirectionalLight>(instance->self);
 				}
 				clear_component<LightComponent>(instance->self);
@@ -696,9 +701,9 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 				InstanceLightData *light = memnew(InstanceLightData);
 
 				if (scenario && VSG::storage->light_get_type(p_base) == VS::LIGHT_DIRECTIONAL) {
-					light->D = scenario->directional_lights.push_back(instance);
-
-					VSG::ecs->registry.assign_or_replace<DirectionalLight>(instance->self.eid);
+					//light->D = scenario->directional_lights.push_back(instance);
+					add_component<DirectionalLight>(instance->self);
+					//VSG::ecs->registry.assign_or_replace<DirectionalLight>(instance->self.eid);
 				}
 
 				light->instance = VSG::scene_render->light_instance_create(p_base);
@@ -774,10 +779,10 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 
 				InstanceLightData *light = static_cast<InstanceLightData *>(instance->base_data);
 
-				if (light->D) {
-					instance->scenario->directional_lights.erase(light->D);
-					light->D = NULL;
-				}
+				//if (light->D) {
+				//	instance->scenario->directional_lights.erase(light->D);
+				//	light->D = NULL;
+				//}
 			} break;
 			case VS::INSTANCE_REFLECTION_PROBE: {
 
@@ -812,9 +817,9 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 
 				InstanceLightData *light = static_cast<InstanceLightData *>(instance->base_data);
 
-				if (VSG::storage->light_get_type(instance->base) == VS::LIGHT_DIRECTIONAL) {
-					light->D = scenario->directional_lights.push_back(instance);
-				}
+				//if (VSG::storage->light_get_type(instance->base) == VS::LIGHT_DIRECTIONAL) {
+				//	light->D = scenario->directional_lights.push_back(instance);
+				//}
 			} break;
 			case VS::INSTANCE_GI_PROBE: {
 
@@ -2186,7 +2191,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	float z_far = p_cam_projection.get_z_far();
 
 	/* STEP 2 - CULL */
-	instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+	
 	light_cull_count = 0;
 
 	reflection_probe_cull_count = 0;
@@ -2234,36 +2239,198 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		}		
 	}
 
-	for (int i = 0; i < instance_cull_count; i++) {
+	RID *directional_light_ptr = &light_instance_cull_result[light_cull_count];
+	directional_light_count = 0;
+
+	std::vector<ShadowUpdateWork> UpdateWork;
+	UpdateWork.reserve(10);
+	// directional lights
+	{
+		//#TODO this should be a ecs query
+		
+		int directional_shadow_count = 0;
+
+		auto directional_lights = VSG::ecs->registry.persistent_view<DirectionalLight, LightComponent, InstanceComponent, Visible>();
+		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * directional_lights.size());
+		for (EntityID lightID : directional_lights) {
+			//for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
+
+			InstanceComponent& ic = directional_lights.get<InstanceComponent>(lightID);
+
+			if (light_cull_count + directional_light_count >= MAX_LIGHTS_CULLED) {
+				break;
+			}
+			//we already match visibility
+
+			//if (!ic.instance->visible)
+			//	continue;
+
+			//InstanceLightData *light = directional_lights.get<LightComponent>(lightID).Data;
+
+			//check shadow..
+
+			//if (light) {
+			if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(ic.self_ID)) {
+				lights_with_shadow[directional_shadow_count++] = ic.instance;
+			}
+			//add to list
+			directional_light_ptr[directional_light_count++] = ic.self_ID;
+			//}
+		}
+
+		VSG::scene_render->set_directional_shadow_count(directional_shadow_count);
+
+		for (int i = 0; i < directional_shadow_count; i++) {
+			ShadowUpdateWork work;
+			work.light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+			UpdateWork.push_back(work);
+			//_light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+		}
+	}
+
+
+	ShadowWorkItem QItem;
+
+
+	{ //setup shadow maps
+
+		for (int i = 0; i < light_cull_count; i++) {
+
+			Instance *ins = light_cull_result[i];
+
+			if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
+				continue;
+			LightComponent& light_comp = get_component<LightComponent>(ins->self);
+			InstanceLightData *light = light_comp.Data;
+
+			float coverage = 0.f;
+
+			{ //compute coverage
+
+				Transform cam_xf = p_cam_transform;
+				float zn = p_cam_projection.get_z_near();
+				Plane p(cam_xf.origin + cam_xf.basis.get_axis(2) * -zn, -cam_xf.basis.get_axis(2)); //camera near plane
+
+				float vp_w, vp_h; //near plane size in screen coordinates
+				p_cam_projection.get_viewport_size(vp_w, vp_h);
+
+				switch (VSG::storage->light_get_type(ins->base)) {
+
+				case VS::LIGHT_OMNI: {
+
+					float radius = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_RANGE);
+
+					//get two points parallel to near plane
+					Vector3 points[2] = {
+						ins->transform.origin,
+						ins->transform.origin + cam_xf.basis.get_axis(0) * radius
+					};
+
+					if (!p_cam_orthogonal) {
+						//if using perspetive, map them to near plane
+						for (int j = 0; j < 2; j++) {
+							if (p.distance_to(points[j]) < 0) {
+								points[j].z = -zn; //small hack to keep size constant when hitting the screen
+							}
+
+							p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
+						}
+					}
+
+					float screen_diameter = points[0].distance_to(points[1]) * 2;
+					coverage = screen_diameter / (vp_w + vp_h);
+				} break;
+				case VS::LIGHT_SPOT: {
+
+					float radius = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_RANGE);
+					float angle = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_SPOT_ANGLE);
+
+					float w = radius * Math::sin(Math::deg2rad(angle));
+					float d = radius * Math::cos(Math::deg2rad(angle));
+
+					Vector3 base = ins->transform.origin - ins->transform.basis.get_axis(2).normalized() * d;
+
+					Vector3 points[2] = {
+						base,
+						base + cam_xf.basis.get_axis(0) * w
+					};
+
+					if (!p_cam_orthogonal) {
+						//if using perspetive, map them to near plane
+						for (int j = 0; j < 2; j++) {
+							if (p.distance_to(points[j]) < 0) {
+								points[j].z = -zn; //small hack to keep size constant when hitting the screen
+							}
+
+							p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
+						}
+					}
+
+					float screen_diameter = points[0].distance_to(points[1]) * 2;
+					coverage = screen_diameter / (vp_w + vp_h);
+
+				} break;
+				default: {
+					ERR_PRINT("Invalid Light Type");
+				}
+				}
+			}
+
+			if (light_comp.shadow_dirty) {
+				light_comp.last_version++;
+				light_comp.shadow_dirty = false;
+			}
+
+			bool redraw = VSG::scene_render->shadow_atlas_update_light(p_shadow_atlas, light->instance, coverage, light_comp.last_version);
+
+			if (redraw) {
+				//must redraw!
+				ShadowUpdateWork work;
+				work.light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+				//work.light = light->;
+				UpdateWork.push_back(work);
+
+				//_light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
+			}
+		};
+	}
+	
+	/* STEP 5 - PROCESS LIGHTS */
+
+	auto handle = std::async(std::launch::async,
+		[&]() {//sort pointlights to start becouse they flicker hard
+		SCOPE_PROFILE(ShadowAsyncWork);
+		//std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+		for (int i = 0; i < UpdateWork.size(); i++)
+		{
+			ShadowUpdateWork & work = UpdateWork[i];
+			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+
+			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+		}
+
+		return 0;
+	});
+
+	{
+		SCOPE_PROFILE(MainFrustrumCull);
+		instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+	}
+
+	{
+		SCOPE_PROFILE(InstancesCull);
+		for (int i = 0; i < instance_cull_count; i++) {
 
 		Instance *ins = instance_cull_result[i];
 		const bool bIsVisible = has_component<Visible>(ins->self);
-		
+
 
 		bool keep = false;
 
 		if ((camera_layer_mask & ins->layer_mask) == 0) {
 
 			//failure
-		} /*else if (has_component<LightComponent>(ins->self) &&/ *ins->base_type == VS::INSTANCE_LIGHT && * /bIsVisible) {
-
-			if (light_cull_count < MAX_LIGHTS_CULLED) {
-
-				LightComponent& light_comp = get_component<LightComponent>(ins->self);
-				InstanceLightData *light = light_comp.Data;
-
-				if (!light->geometries.empty()) {
-					//do not add this light if no geometry is affected by it..
-					light_cull_result[light_cull_count] = ins;
-					light_instance_cull_result[light_cull_count] = light->instance;
-					if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(ins->base)) {
-						VSG::scene_render->light_instance_mark_visible(light->instance); //mark it visible for shadow allocation later
-					}
-
-					light_cull_count++;
-				}
-			}
-		}*/ else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE && bIsVisible) {
+		} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE && bIsVisible) {
 
 			if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
 
@@ -2384,226 +2551,56 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		}
 	}
 
-	/* STEP 5 - PROCESS LIGHTS */
-
-	RID *directional_light_ptr = &light_instance_cull_result[light_cull_count];
-	directional_light_count = 0;
-
-	std::vector<ShadowUpdateWork> UpdateWork;
-	UpdateWork.reserve(10);
-	// directional lights
-	{
-		//#TODO this should be a ecs query
-		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * scenario->directional_lights.size());
-		int directional_shadow_count = 0;
-
-		auto directional_lights = VSG::ecs->registry.persistent_view<DirectionalLight,LightComponent,InstanceComponent,Visible>();
-
-		for(EntityID lightID : directional_lights){
-		//for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
-
-			InstanceComponent& ic = directional_lights.get<InstanceComponent>(lightID);
-
-			if (light_cull_count + directional_light_count >= MAX_LIGHTS_CULLED) {
-				break;
-			}
-			//we already match visibility
-
-			//if (!ic.instance->visible)
-			//	continue;
-
-			//InstanceLightData *light = directional_lights.get<LightComponent>(lightID).Data;
-
-			//check shadow..
-
-			//if (light) {
-			if (p_shadow_atlas.is_valid() && VSG::storage->light_has_shadow(ic.self_ID)) {
-				lights_with_shadow[directional_shadow_count++] = ic.instance;
-			}
-			//add to list
-			directional_light_ptr[directional_light_count++] = ic.self_ID;
-			//}
-		}
-
-		VSG::scene_render->set_directional_shadow_count(directional_shadow_count);
-	
-		for (int i = 0; i < directional_shadow_count; i++) {
-			ShadowUpdateWork work;
-			work.light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-			UpdateWork.push_back(work);
-			//_light_instance_update_shadow(lights_with_shadow[i], p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-		}	
 	}
 
-	
-	ShadowWorkItem QItem;
-	
-
-	{ //setup shadow maps
-
-		
-		for (int i = 0; i < light_cull_count; i++) {
-
-			Instance *ins = light_cull_result[i];
-
-			if (!p_shadow_atlas.is_valid() || !VSG::storage->light_has_shadow(ins->base))
-				continue;
-			LightComponent& light_comp = get_component<LightComponent>(ins->self);
-			InstanceLightData *light = light_comp.Data;
-
-			float coverage = 0.f;
-
-			{ //compute coverage
-
-				Transform cam_xf = p_cam_transform;
-				float zn = p_cam_projection.get_z_near();
-				Plane p(cam_xf.origin + cam_xf.basis.get_axis(2) * -zn, -cam_xf.basis.get_axis(2)); //camera near plane
-
-				float vp_w, vp_h; //near plane size in screen coordinates
-				p_cam_projection.get_viewport_size(vp_w, vp_h);
-
-				switch (VSG::storage->light_get_type(ins->base)) {
-
-					case VS::LIGHT_OMNI: {
-
-						float radius = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_RANGE);
-
-						//get two points parallel to near plane
-						Vector3 points[2] = {
-							ins->transform.origin,
-							ins->transform.origin + cam_xf.basis.get_axis(0) * radius
-						};
-
-						if (!p_cam_orthogonal) {
-							//if using perspetive, map them to near plane
-							for (int j = 0; j < 2; j++) {
-								if (p.distance_to(points[j]) < 0) {
-									points[j].z = -zn; //small hack to keep size constant when hitting the screen
-								}
-
-								p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
-							}
-						}
-
-						float screen_diameter = points[0].distance_to(points[1]) * 2;
-						coverage = screen_diameter / (vp_w + vp_h);
-					} break;
-					case VS::LIGHT_SPOT: {
-
-						float radius = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_RANGE);
-						float angle = VSG::storage->light_get_param(ins->base, VS::LIGHT_PARAM_SPOT_ANGLE);
-
-						float w = radius * Math::sin(Math::deg2rad(angle));
-						float d = radius * Math::cos(Math::deg2rad(angle));
-
-						Vector3 base = ins->transform.origin - ins->transform.basis.get_axis(2).normalized() * d;
-
-						Vector3 points[2] = {
-							base,
-							base + cam_xf.basis.get_axis(0) * w
-						};
-
-						if (!p_cam_orthogonal) {
-							//if using perspetive, map them to near plane
-							for (int j = 0; j < 2; j++) {
-								if (p.distance_to(points[j]) < 0) {
-									points[j].z = -zn; //small hack to keep size constant when hitting the screen
-								}
-
-								p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
-							}
-						}
-
-						float screen_diameter = points[0].distance_to(points[1]) * 2;
-						coverage = screen_diameter / (vp_w + vp_h);
-
-					} break;
-					default: {
-						ERR_PRINT("Invalid Light Type");
-					}
-				}
-			}
-
-			if (light_comp.shadow_dirty) {
-				light->last_version++;
-				light_comp.shadow_dirty = false;
-			}
-
-			bool redraw = VSG::scene_render->shadow_atlas_update_light(p_shadow_atlas, light->instance, coverage, light->last_version);
-
-			if (redraw) {
-				//must redraw!
-				ShadowUpdateWork work;
-				work.light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-				//work.light = light->;
-				UpdateWork.push_back(work);
-
-				//_light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
-			}			
-		};
-	}
-
-	static bool bParallelShadowcast = true;
-	if (UpdateWork.size() > 2 && bParallelShadowcast)
-	{
-
-		//execute one to prime the queue
-		{
-			ShadowUpdateWork & work = UpdateWork[0];
-		
-			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-				work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-			
-			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-			
-		}
-
-		auto handle = std::async(std::launch::async,
-		[&](){//sort pointlights to start becouse they flicker hard
-			SCOPE_PROFILE(ShadowAsyncWork);
-			//std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-			for(int i = 1; i < UpdateWork.size();i++)
-			{
-				ShadowUpdateWork & work = UpdateWork[i];
-				bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-
-				get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-			}			
-			
-			return 0;
-		});
-		
-		//// Wait until sends data
-		//std::unique_lock<std::mutex> lk(m);
-		//cv.wait(lk, [] {return ready; });
-
-		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
-		while (ShadowWorkQueue.try_dequeue(QItem))
-		{
-			
-			 {
-				SCOPE_PROFILE(ShadowRenderasync)
-				if (QItem.bUpdateTransform) {
-					SCOPE_PROFILE(ShadowTransform)
-						VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
-
-				}
-				if (QItem.bRender) {
-					SCOPE_PROFILE(ShadowPass)
-						VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
-				}
-			}
-		}
-	}
-	else {
-		std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-
-			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-
-			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-		});
-		}
-
+	//static bool bParallelShadowcast = true;
+	//if (UpdateWork.size() > 2 && bParallelShadowcast)
+	//{
+	//
+	//	//execute one to prime the queue
+	//	{
+	//		ShadowUpdateWork & work = UpdateWork[0];
+	//	
+	//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+	//			work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+	//		
+	//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+	//		
+	//	}
+	//
+	//	
+	//	
+	//	//// Wait until sends data
+	//	//std::unique_lock<std::mutex> lk(m);
+	//	//cv.wait(lk, [] {return ready; });
+	//
+	//	//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
+	//	while (ShadowWorkQueue.try_dequeue(QItem))
+	//	{
+	//		
+	//		 {
+	//			SCOPE_PROFILE(ShadowRenderasync)
+	//			if (QItem.bUpdateTransform) {
+	//				SCOPE_PROFILE(ShadowTransform)
+	//					VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+	//
+	//			}
+	//			if (QItem.bRender) {
+	//				SCOPE_PROFILE(ShadowPass)
+	//					VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+	//			}
+	//		}
+	//	}
+	//}
+	//else {
+	//	std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+	//
+	//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+	//
+	//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+	//	});
+	//	}
+	//
 		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 
 		
@@ -3573,24 +3570,29 @@ bool VisualServerScene::_check_gi_probe(Instance *p_gi_probe) {
 
 	bool all_equal = true;
 
-	for (List<Instance *>::Element *E = p_gi_probe->scenario->directional_lights.front(); E; E = E->next()) {
+	auto &reg = VSG::ecs->registry;
+	auto light_view = reg.persistent_view<InstanceBoundsComponent, LightComponent,InstanceComponent>();
 
+	
+	for (auto et : light_view){//List<Instance *>::Element *E = p_gi_probe->scenario->directional_lights.front(); E; E = E->next()) {
+		InstanceComponent& inst_comp = light_view.get<InstanceComponent>(et);
 		InstanceGIProbeData::LightCache lc;
-		lc.type = VSG::storage->light_get_type(E->get()->base);
-		lc.color = VSG::storage->light_get_color(E->get()->base);
-		lc.energy = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_ENERGY) * VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_INDIRECT_ENERGY);
-		lc.radius = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_RANGE);
-		lc.attenuation = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_ATTENUATION);
-		lc.spot_angle = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ANGLE);
-		lc.spot_attenuation = VSG::storage->light_get_param(E->get()->base, VS::LIGHT_PARAM_SPOT_ATTENUATION);
-		lc.transform = probe_data->dynamic.light_to_cell_xform * E->get()->transform;
-		lc.visible = has_component<Visible>(E->get()->self);
+		auto base = inst_comp.instance->base;
+		lc.type = VSG::storage->light_get_type(base);
+		lc.color = VSG::storage->light_get_color(base);
+		lc.energy = VSG::storage->light_get_param(base, VS::LIGHT_PARAM_ENERGY) * VSG::storage->light_get_param(base, VS::LIGHT_PARAM_INDIRECT_ENERGY);
+		lc.radius = VSG::storage->light_get_param(base, VS::LIGHT_PARAM_RANGE);
+		lc.attenuation = VSG::storage->light_get_param(base, VS::LIGHT_PARAM_ATTENUATION);
+		lc.spot_angle = VSG::storage->light_get_param(base, VS::LIGHT_PARAM_SPOT_ANGLE);
+		lc.spot_attenuation = VSG::storage->light_get_param(base, VS::LIGHT_PARAM_SPOT_ATTENUATION);
+		lc.transform = probe_data->dynamic.light_to_cell_xform * inst_comp.instance->transform;
+		lc.visible = has_component<Visible>(et);
 
-		if (!probe_data->dynamic.light_cache.has(E->get()->self) || probe_data->dynamic.light_cache[E->get()->self] != lc) {
+		if (!probe_data->dynamic.light_cache.has(inst_comp.instance->self) || probe_data->dynamic.light_cache[inst_comp.instance->self] != lc) {
 			all_equal = false;
 		}
 
-		probe_data->dynamic.light_cache_changes[E->get()->self] = lc;
+		probe_data->dynamic.light_cache_changes[inst_comp.instance->self] = lc;
 	}
 
 	for (Set<Instance *>::Element *E = probe_data->lights.front(); E; E = E->next()) {

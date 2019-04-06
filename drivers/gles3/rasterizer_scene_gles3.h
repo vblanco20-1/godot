@@ -45,7 +45,9 @@
 #include "drivers/gles3/shaders/ssao_minify.glsl.gen.h"
 #include "drivers/gles3/shaders/subsurf_scattering.glsl.gen.h"
 #include "drivers/gles3/shaders/tonemap.glsl.gen.h"
-
+#include <algorithm>
+#include <execution>
+#include "main/profiler.h"
 class RasterizerSceneGLES3 : public RasterizerScene {
 public:
 	enum ShadowFilterMode {
@@ -724,7 +726,38 @@ public:
 			if (p_alpha) {
 				sorter.sort(&elements[max_elements - alpha_element_count], alpha_element_count);
 			} else {
-				sorter.sort(elements, element_count);
+				//std::vector<Element*> v_elements;
+				//{
+				//	SCOPE_PROFILE(sort_fill);
+				//
+				//	v_elements.reserve(element_count);
+				//	for (int i = 0; i < element_count; i++)
+				//	{
+				//		v_elements.push_back(elements[i]);
+				//	}
+				//
+				//}
+				//{
+				//	SCOPE_PROFILE(old_Sort);
+				//
+				//	std::sort(elements, elements + element_count, [](auto A, auto B) {
+				//		return A->sort_key < B->sort_key;
+				//	});
+				//}
+
+				{
+				SCOPE_PROFILE(STD_Sort);
+				
+					std::sort(elements, elements + element_count, [](auto A, auto B) {
+						return A->sort_key < B->sort_key;
+					});
+				}
+				
+				//{
+				//SCOPE_PROFILE(OLD_SORT);
+				//
+				//sorter.sort(elements, element_count);
+				//}
 			}
 		}
 
@@ -746,6 +779,7 @@ public:
 		}
 
 		struct SortByReverseDepthAndPriority {
+
 
 			_FORCE_INLINE_ bool operator()(const Element *A, const Element *B) const {
 				uint32_t layer_A = uint32_t(A->sort_key >> SORT_KEY_PRIORITY_SHIFT);
