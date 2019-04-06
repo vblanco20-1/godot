@@ -4,7 +4,6 @@
 
 #include <memory>
 #include <utility>
-#include <cassert>
 #include "../config/config.h"
 
 
@@ -23,7 +22,7 @@ namespace entt {
  * @tparam Service Type of service managed by the locator.
  */
 template<typename Service>
-struct service_locator final {
+struct service_locator {
     /*! @brief Type of service offered. */
     using service_type = Service;
 
@@ -88,7 +87,7 @@ struct service_locator final {
      * @param ptr Service to use to replace the current one.
      */
     inline static void set(std::shared_ptr<Service> ptr) {
-        assert(static_cast<bool>(ptr));
+        ENTT_ASSERT(static_cast<bool>(ptr));
         service = std::move(ptr);
     }
 

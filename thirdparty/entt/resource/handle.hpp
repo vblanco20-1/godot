@@ -4,15 +4,11 @@
 
 #include <memory>
 #include <utility>
-#include <cassert>
 #include "../config/config.h"
+#include "fwd.hpp"
 
 
 namespace entt {
-
-
-template<typename Resource>
-class resource_cache;
 
 
 /**
@@ -28,7 +24,7 @@ class resource_cache;
  * @tparam Resource Type of resource managed by a handle.
  */
 template<typename Resource>
-class resource_handle final {
+class resource_handle {
     /*! @brief Resource handles are friends of their caches. */
     friend class resource_cache<Resource>;
 
@@ -39,15 +35,6 @@ class resource_handle final {
 public:
     /*! @brief Default constructor. */
     resource_handle() ENTT_NOEXCEPT = default;
-    /*! @brief Default copy constructor. */
-    resource_handle(const resource_handle &) ENTT_NOEXCEPT = default;
-    /*! @brief Default move constructor. */
-    resource_handle(resource_handle &&) ENTT_NOEXCEPT = default;
-
-    /*! @brief Default copy assignment operator. @return This handle. */
-    resource_handle & operator=(const resource_handle &) ENTT_NOEXCEPT = default;
-    /*! @brief Default move assignment operator. @return This handle. */
-    resource_handle & operator=(resource_handle &&) ENTT_NOEXCEPT = default;
 
     /**
      * @brief Gets a reference to the managed resource.
@@ -60,7 +47,7 @@ public:
      * @return A reference to the managed resource.
      */
     const Resource & get() const ENTT_NOEXCEPT {
-        assert(static_cast<bool>(resource));
+        ENTT_ASSERT(static_cast<bool>(resource));
         return *resource;
     }
 
@@ -98,7 +85,7 @@ public:
      * contains no resource at all.
      */
     inline const Resource * operator->() const ENTT_NOEXCEPT {
-        assert(static_cast<bool>(resource));
+        ENTT_ASSERT(static_cast<bool>(resource));
         return resource.get();
     }
 

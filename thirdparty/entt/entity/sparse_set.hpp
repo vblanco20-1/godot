@@ -9,7 +9,6 @@
 #include <vector>
 #include <memory>
 #include <cstddef>
-#include <cassert>
 #include <type_traits>
 #include "../config/config.h"
 #include "../core/algorithm.hpp"
@@ -61,14 +60,17 @@ template<typename Entity>
 class sparse_set<Entity> {
     using traits_type = entt_traits<Entity>;
 
-    class iterator final {
+    static_assert(ENTT_PAGE_SIZE && ((ENTT_PAGE_SIZE & (ENTT_PAGE_SIZE - 1)) == 0));
+    static constexpr auto entt_per_page = ENTT_PAGE_SIZE / sizeof(typename entt_traits<Entity>::entity_type);
+
+    class iterator {
         friend class sparse_set<Entity>;
 
         using direct_type = const std::vector<Entity>;
         using index_type = typename traits_type::difference_type;
 
-        iterator(direct_type *direct, index_type index) ENTT_NOEXCEPT
-            : direct{direct}, index{index}
+        iterator(direct_type *ref, index_type idx) ENTT_NOEXCEPT
+            : direct{ref}, index{idx}
         {}
 
     public:
@@ -79,12 +81,6 @@ class sparse_set<Entity> {
         using iterator_category = std::random_access_iterator_tag;
 
         iterator() ENTT_NOEXCEPT = default;
-
-        iterator(const iterator &) ENTT_NOEXCEPT = default;
-        iterator(iterator &&) ENTT_NOEXCEPT = default;
-
-        iterator & operator=(const iterator &) ENTT_NOEXCEPT = default;
-        iterator & operator=(iterator &&) ENTT_NOEXCEPT = default;
 
         iterator & operator++() ENTT_NOEXCEPT {
             return --index, *this;
@@ -168,6 +164,25 @@ class sparse_set<Entity> {
         index_type index;
     };
 
+    void assure(std::size_t page) {
+        if(!(page < reverse.size())) {
+            reverse.resize(page+1);
+        }
+
+        if(!reverse[page].first) {
+            reverse[page].first = std::make_unique<entity_type[]>(entt_per_page);
+            // null is safe in all cases for our purposes
+            std::fill_n(reverse[page].first.get(), entt_per_page, null);
+        }
+    }
+
+    auto index(Entity entt) const ENTT_NOEXCEPT {
+        const auto identifier = entt & traits_type::entity_mask;
+        const auto page = size_type(identifier / entt_per_page);
+        const auto offset = size_type(identifier & (entt_per_page - 1));
+        return std::make_pair(page, offset);
+    }
+
 public:
     /*! @brief Underlying entity identifier. */
     using entity_type = Entity;
@@ -176,8 +191,48 @@ public:
     /*! @brief Input iterator type. */
     using iterator_type = iterator;
 
+    /*! @brief Default constructor. */
+    sparse_set() = default;
+
+    /**
+     * @brief Copy constructor.
+     * @param other The instance to copy from.
+     */
+    sparse_set(const sparse_set &other)
+        : reverse{},
+          direct{other.direct}
+    {
+        for(size_type i = {}, last = other.reverse.size(); i < last; ++i) {
+            if(other.reverse[i].first) {
+                assure(i);
+                std::copy_n(other.reverse[i].first.get(), entt_per_page, reverse[i].first.get());
+                reverse[i].second = other.reverse[i].second;
+            }
+        }
+    }
+
+    /*! @brief Default move constructor. */
+    sparse_set(sparse_set &&) = default;
+
     /*! @brief Default destructor. */
     virtual ~sparse_set() ENTT_NOEXCEPT = default;
+
+    /*! @brief Default move assignment operator. @return This sparse set. */
+    sparse_set & operator=(sparse_set &&) = default;
+
+    /**
+     * @brief Copy assignment operator.
+     * @param other The instance to copy from.
+     * @return This sparse set.
+     */
+    sparse_set & operator=(const sparse_set &other) {
+        if(&other != this) {
+            auto tmp{other};
+            *this = std::move(tmp);
+        }
+
+        return *this;
+    }
 
     /**
      * @brief Increases the capacity of a sparse set.
@@ -187,7 +242,7 @@ public:
      *
      * @param cap Desired capacity.
      */
-    void reserve(const size_type cap) {
+    virtual void reserve(const size_type cap) {
         direct.reserve(cap);
     }
 
@@ -198,6 +253,22 @@ public:
      */
     size_type capacity() const ENTT_NOEXCEPT {
         return direct.capacity();
+    }
+
+    /*! @brief Requests the removal of unused capacity. */
+    virtual void shrink_to_fit() {
+        while(!reverse.empty() && !reverse.back().second) {
+            reverse.pop_back();
+        }
+
+        for(auto &&data: reverse) {
+            if(!data.second) {
+                data.first.reset();
+            }
+        }
+
+        reverse.shrink_to_fit();
+        direct.shrink_to_fit();
     }
 
     /**
@@ -211,7 +282,7 @@ public:
      * @return Extent of the sparse set.
      */
     size_type extent() const ENTT_NOEXCEPT {
-        return reverse.size();
+        return reverse.size() * entt_per_page;
     }
 
     /**
@@ -291,47 +362,23 @@ public:
 
     /**
      * @brief Finds an entity.
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @return An iterator to the given entity if it's found, past the end
      * iterator otherwise.
      */
-    iterator_type find(const entity_type entity) const ENTT_NOEXCEPT {
-        return has(entity) ? --(end() - get(entity)) : end();
+    iterator_type find(const entity_type entt) const ENTT_NOEXCEPT {
+        return has(entt) ? --(end() - get(entt)) : end();
     }
 
     /**
      * @brief Checks if a sparse set contains an entity.
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @return True if the sparse set contains the entity, false otherwise.
      */
-    bool has(const entity_type entity) const ENTT_NOEXCEPT {
-        const auto pos = size_type(entity & traits_type::entity_mask);
+    bool has(const entity_type entt) const ENTT_NOEXCEPT {
+        auto [page, offset] = index(entt);
         // testing against null permits to avoid accessing the direct vector
-        return (pos < reverse.size()) && (reverse[pos] != null);
-    }
-
-    /**
-     * @brief Checks if a sparse set contains an entity (unsafe).
-     *
-     * Alternative version of `has`. It accesses the underlying data structures
-     * without bounds checking and thus it's both unsafe and risky to use.<br/>
-     * You should not invoke directly this function unless you know exactly what
-     * you are doing. Prefer the `has` member function instead.
-     *
-     * @warning
-     * Attempting to use an entity that doesn't belong to the sparse set can
-     * result in undefined behavior.<br/>
-     * An assertion will abort the execution at runtime in debug mode in case of
-     * bounds violation.
-     *
-     * @param entity A valid entity identifier.
-     * @return True if the sparse set contains the entity, false otherwise.
-     */
-    bool fast(const entity_type entity) const ENTT_NOEXCEPT {
-        const auto pos = size_type(entity & traits_type::entity_mask);
-        assert(pos < reverse.size());
-        // testing against null permits to avoid accessing the direct vector
-        return (reverse[pos] != null);
+        return (page < reverse.size() && reverse[page].second && reverse[page].first[offset] != null);
     }
 
     /**
@@ -343,13 +390,13 @@ public:
      * An assertion will abort the execution at runtime in debug mode if the
      * sparse set doesn't contain the given entity.
      *
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @return The position of the entity in the sparse set.
      */
-    size_type get(const entity_type entity) const ENTT_NOEXCEPT {
-        assert(has(entity));
-        const auto pos = size_type(entity & traits_type::entity_mask);
-        return size_type(reverse[pos]);
+    size_type get(const entity_type entt) const ENTT_NOEXCEPT {
+        ENTT_ASSERT(has(entt));
+        auto [page, offset] = index(entt);
+        return size_type(reverse[page].first[offset]);
     }
 
     /**
@@ -361,19 +408,41 @@ public:
      * An assertion will abort the execution at runtime in debug mode if the
      * sparse set already contains the given entity.
      *
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      */
-    void construct(const entity_type entity) {
-        assert(!has(entity));
-        const auto pos = size_type(entity & traits_type::entity_mask);
+    void construct(const entity_type entt) {
+        ENTT_ASSERT(!has(entt));
+        auto [page, offset] = index(entt);
+        assure(page);
+        reverse[page].first[offset] = entity_type(direct.size());
+        reverse[page].second++;
+        direct.push_back(entt);
+    }
 
-        if(!(pos < reverse.size())) {
-            // null is safe in all cases for our purposes
-            reverse.resize(pos+1, null);
-        }
+    /**
+     * @brief Assigns one or more entities to a sparse set.
+     *
+     * @warning
+     * Attempting to assign an entity that already belongs to the sparse set
+     * results in undefined behavior.<br/>
+     * An assertion will abort the execution at runtime in debug mode if the
+     * sparse set already contains the given entity.
+     *
+     * @tparam It Type of forward iterator.
+     * @param first An iterator to the first element of the range of entities.
+     * @param last An iterator past the last element of the range of entities.
+     */
+    template<typename It>
+    void batch(It first, It last) {
+        std::for_each(first, last, [next = entity_type(direct.size()), this](const auto entt) mutable {
+            ENTT_ASSERT(!has(entt));
+            auto [page, offset] = index(entt);
+            assure(page);
+            reverse[page].first[offset] = next++;
+            reverse[page].second++;
+        });
 
-        reverse[pos] = entity_type(direct.size());
-        direct.push_back(entity);
+        direct.insert(direct.end(), first, last);
     }
 
     /**
@@ -385,16 +454,16 @@ public:
      * An assertion will abort the execution at runtime in debug mode if the
      * sparse set doesn't contain the given entity.
      *
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      */
-    virtual void destroy(const entity_type entity) {
-        assert(has(entity));
-        const auto back = direct.back();
-        auto &candidate = reverse[size_type(entity & traits_type::entity_mask)];
-        // swapping isn't required here, we are getting rid of the last element
-        reverse[back & traits_type::entity_mask] = candidate;
-        direct[size_type(candidate)] = back;
-        candidate = null;
+    virtual void destroy(const entity_type entt) {
+        ENTT_ASSERT(has(entt));
+        auto [from_page, from_offset] = index(entt);
+        auto [to_page, to_offset] = index(direct.back());
+        std::swap(direct[size_type(reverse[from_page].first[from_offset])], direct.back());
+        std::swap(reverse[from_page].first[from_offset], reverse[to_page].first[to_offset]);
+        reverse[from_page].first[from_offset] = null;
+        reverse[from_page].second--;
         direct.pop_back();
     }
 
@@ -414,12 +483,12 @@ public:
      * @param rhs A valid position within the sparse set.
      */
     void swap(const size_type lhs, const size_type rhs) ENTT_NOEXCEPT {
-        assert(lhs < direct.size());
-        assert(rhs < direct.size());
-        auto &src = direct[lhs];
-        auto &dst = direct[rhs];
-        std::swap(reverse[src & traits_type::entity_mask], reverse[dst & traits_type::entity_mask]);
-        std::swap(src, dst);
+        ENTT_ASSERT(lhs < direct.size());
+        ENTT_ASSERT(rhs < direct.size());
+        auto [src_page, src_offset] = index(direct[lhs]);
+        auto [dst_page, dst_offset] = index(direct[rhs]);
+        std::swap(reverse[src_page].first[src_offset], reverse[dst_page].first[dst_offset]);
+        std::swap(direct[lhs], direct[rhs]);
     }
 
     /**
@@ -441,7 +510,7 @@ public:
      *
      * @param other The sparse sets that imposes the order of the entities.
      */
-    void respect(const sparse_set &other) ENTT_NOEXCEPT {
+    virtual void respect(const sparse_set &other) ENTT_NOEXCEPT {
         const auto to = other.end();
         auto from = other.begin();
 
@@ -477,16 +546,11 @@ public:
      * @return A fresh copy of the given sparse set.
      */
     virtual std::unique_ptr<sparse_set> clone() const {
-        auto other = std::make_unique<sparse_set>();
-        other->reverse.resize(reverse.size());
-        other->direct.resize(direct.size());
-        std::copy(reverse.cbegin(), reverse.cend(), other->reverse.begin());
-        std::copy(direct.cbegin(), direct.cend(), other->direct.begin());
-        return other;
+        return std::make_unique<sparse_set>(*this);
     }
 
 private:
-    std::vector<entity_type> reverse;
+    std::vector<std::pair<std::unique_ptr<entity_type[]>, size_type>> reverse;
     std::vector<entity_type> direct;
 };
 
@@ -519,14 +583,14 @@ class sparse_set<Entity, Type>: public sparse_set<Entity> {
     using traits_type = entt_traits<Entity>;
 
     template<bool Const, bool = std::is_empty_v<Type>>
-    class iterator final {
+    class iterator {
         friend class sparse_set<Entity, Type>;
 
         using instance_type = std::conditional_t<Const, const std::vector<Type>, std::vector<Type>>;
         using index_type = typename traits_type::difference_type;
 
-        iterator(instance_type *instances, index_type index) ENTT_NOEXCEPT
-            : instances{instances}, index{index}
+        iterator(instance_type *ref, index_type idx) ENTT_NOEXCEPT
+            : instances{ref}, index{idx}
         {}
 
     public:
@@ -537,12 +601,6 @@ class sparse_set<Entity, Type>: public sparse_set<Entity> {
         using iterator_category = std::random_access_iterator_tag;
 
         iterator() ENTT_NOEXCEPT = default;
-
-        iterator(const iterator &) ENTT_NOEXCEPT = default;
-        iterator(iterator &&) ENTT_NOEXCEPT = default;
-
-        iterator & operator=(const iterator &) ENTT_NOEXCEPT = default;
-        iterator & operator=(iterator &&) ENTT_NOEXCEPT = default;
 
         iterator & operator++() ENTT_NOEXCEPT {
             return --index, *this;
@@ -627,14 +685,14 @@ class sparse_set<Entity, Type>: public sparse_set<Entity> {
     };
 
     template<bool Const>
-    class iterator<Const, true> final {
+    class iterator<Const, true> {
         friend class sparse_set<Entity, Type>;
 
         using instance_type = std::conditional_t<Const, const Type, Type>;
         using index_type = typename traits_type::difference_type;
 
-        iterator(instance_type *instance, index_type index) ENTT_NOEXCEPT
-            : instance{instance}, index{index}
+        iterator(instance_type *ref, index_type idx) ENTT_NOEXCEPT
+            : instance{ref}, index{idx}
         {}
 
     public:
@@ -645,12 +703,6 @@ class sparse_set<Entity, Type>: public sparse_set<Entity> {
         using iterator_category = std::random_access_iterator_tag;
 
         iterator() ENTT_NOEXCEPT = default;
-
-        iterator(const iterator &) ENTT_NOEXCEPT = default;
-        iterator(iterator &&) ENTT_NOEXCEPT = default;
-
-        iterator & operator=(const iterator &) ENTT_NOEXCEPT = default;
-        iterator & operator=(iterator &&) ENTT_NOEXCEPT = default;
 
         iterator & operator++() ENTT_NOEXCEPT {
             return --index, *this;
@@ -752,11 +804,26 @@ public:
      *
      * @param cap Desired capacity.
      */
-    void reserve([[maybe_unused]] const size_type cap) {
+    void reserve(const size_type cap) override {
         underlying_type::reserve(cap);
 
         if constexpr(!std::is_empty_v<object_type>) {
             instances.reserve(cap);
+        }
+    }
+
+    /**
+     * @brief Requests the removal of unused capacity.
+     *
+     * @note
+     * Empty components aren't explicitly instantiated. Only one instance of the
+     * given type is created. Therefore, this function does nothing.
+     */
+    void shrink_to_fit() override {
+        underlying_type::shrink_to_fit();
+
+        if constexpr(!std::is_empty_v<object_type>) {
+            instances.shrink_to_fit();
         }
     }
 
@@ -773,7 +840,7 @@ public:
      * performance boost but less guarantees. Use `begin` and `end` if you want
      * to iterate the sparse set in the expected order.
      *
-     * @warning
+     * @note
      * Empty components aren't explicitly instantiated. Only one instance of the
      * given type is created. Therefore, this function always returns a pointer
      * to that instance.
@@ -791,6 +858,18 @@ public:
     /*! @copydoc raw */
     object_type * raw() ENTT_NOEXCEPT {
         return const_cast<object_type *>(std::as_const(*this).raw());
+    }
+
+    /**
+     * @brief Returns the entity to which a given component is assigned.
+     * @param instance A valid reference to an object.
+     * @return A valid entity identifier if the instance belongs to the sparse
+     * set, the null entity otherwise.
+     */
+    inline entity_type entity(const object_type &instance) {
+        const auto address = std::addressof(instance);
+        const bool valid = !(instances.data() > address) && (address < (instances.data() + instances.size()));
+        return valid ? sparse_set<entity_type>::data()[address - instances.data()] : null;
     }
 
     /**
@@ -858,45 +937,44 @@ public:
      * An assertion will abort the execution at runtime in debug mode if the
      * sparse set doesn't contain the given entity.
      *
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @return The object associated with the entity.
      */
-    const object_type & get([[maybe_unused]] const entity_type entity) const ENTT_NOEXCEPT {
+    const object_type & get([[maybe_unused]] const entity_type entt) const ENTT_NOEXCEPT {
         if constexpr(std::is_empty_v<object_type>) {
-            assert(underlying_type::has(entity));
+            ENTT_ASSERT(underlying_type::has(entt));
             return instances;
         } else {
-            return instances[underlying_type::get(entity)];
+            return instances[underlying_type::get(entt)];
         }
     }
 
     /*! @copydoc get */
-    inline object_type & get(const entity_type entity) ENTT_NOEXCEPT {
-        return const_cast<object_type &>(std::as_const(*this).get(entity));
+    inline object_type & get(const entity_type entt) ENTT_NOEXCEPT {
+        return const_cast<object_type &>(std::as_const(*this).get(entt));
     }
 
     /**
      * @brief Returns a pointer to the object associated with an entity, if any.
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @return The object associated with the entity, if any.
      */
-    const object_type * try_get(const entity_type entity) const ENTT_NOEXCEPT {
+    const object_type * try_get(const entity_type entt) const ENTT_NOEXCEPT {
         if constexpr(std::is_empty_v<object_type>) {
-            return underlying_type::has(entity) ? &instances : nullptr;
+            return underlying_type::has(entt) ? &instances : nullptr;
         } else {
-            return underlying_type::has(entity) ? (instances.data() + underlying_type::get(entity)) : nullptr;
+            return underlying_type::has(entt) ? (instances.data() + underlying_type::get(entt)) : nullptr;
         }
     }
 
     /*! @copydoc try_get */
-    inline object_type * try_get(const entity_type entity) ENTT_NOEXCEPT {
-        return const_cast<object_type *>(std::as_const(*this).try_get(entity));
+    inline object_type * try_get(const entity_type entt) ENTT_NOEXCEPT {
+        return const_cast<object_type *>(std::as_const(*this).try_get(entt));
     }
 
     /**
      * @brief Assigns an entity to a sparse set and constructs its object.
      *
-     * @note
      * This version accept both types that can be constructed in place directly
      * and types like aggregates that do not work well with a placement new as
      * performed usually under the hood during an _emplace back_.
@@ -908,15 +986,14 @@ public:
      * sparse set already contains the given entity.
      *
      * @tparam Args Types of arguments to use to construct the object.
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      * @param args Parameters to use to construct an object for the entity.
      * @return The object associated with the entity.
      */
     template<typename... Args>
-    object_type & construct([[maybe_unused]] const entity_type entity, [[maybe_unused]] Args &&... args) {
-        underlying_type::construct(entity);
-
+    object_type & construct(const entity_type entt, [[maybe_unused]] Args &&... args) {
         if constexpr(std::is_empty_v<object_type>) {
+            underlying_type::construct(entt);
             return instances;
         } else {
             if constexpr(std::is_aggregate_v<object_type>) {
@@ -925,7 +1002,47 @@ public:
                 instances.emplace_back(std::forward<Args>(args)...);
             }
 
+            // entity goes after component in case constructor throws
+            underlying_type::construct(entt);
             return instances.back();
+        }
+    }
+
+    /**
+     * @brief Assigns one or more entities to a sparse set and constructs their
+     * objects.
+     *
+     * The object type must be at least default constructible.
+     *
+     * @note
+     * Empty components aren't explicitly instantiated. Only one instance of the
+     * given type is created. Therefore, this function always returns a pointer
+     * to that instance.
+     *
+     * @warning
+     * Attempting to assign an entity that already belongs to the sparse set
+     * results in undefined behavior.<br/>
+     * An assertion will abort the execution at runtime in debug mode if the
+     * sparse set already contains the given entity.
+     *
+     * @tparam It Type of forward iterator.
+     * @param first An iterator to the first element of the range of entities.
+     * @param last An iterator past the last element of the range of entities.
+     * @return A pointer to the array of instances just created and sorted the
+     * same of the entities.
+     */
+    template<typename It>
+    object_type * batch(It first, It last) {
+        if constexpr(std::is_empty_v<object_type>) {
+            underlying_type::batch(first, last);
+            return &instances;
+        } else {
+            static_assert(std::is_default_constructible_v<object_type>);
+            const auto skip = instances.size();
+            instances.insert(instances.end(), last-first, {});
+            // entity goes after component in case constructor throws
+            underlying_type::batch(first, last);
+            return instances.data() + skip;
         }
     }
 
@@ -938,18 +1055,15 @@ public:
      * An assertion will abort the execution at runtime in debug mode if the
      * sparse set doesn't contain the given entity.
      *
-     * @param entity A valid entity identifier.
+     * @param entt A valid entity identifier.
      */
-    void destroy(const entity_type entity) override {
+    void destroy(const entity_type entt) override {
         if constexpr(!std::is_empty_v<object_type>) {
-            // swapping isn't required here, we are getting rid of the last element
-            // however, we must protect ourselves from self assignments (see #37)
-            auto tmp = std::move(instances.back());
-            instances[underlying_type::get(entity)] = std::move(tmp);
+            std::swap(instances[underlying_type::get(entt)], instances.back());
             instances.pop_back();
         }
 
-        underlying_type::destroy(entity);
+        underlying_type::destroy(entt);
     }
 
     /**
@@ -982,13 +1096,13 @@ public:
      * this member function.
      *
      * @note
+     * Empty components aren't explicitly instantiated. Therefore, this function
+     * isn't available for them.
+     *
+     * @note
      * Attempting to iterate elements using a raw pointer returned by a call to
      * either `data` or `raw` gives no guarantees on the order, even though
      * `sort` has been invoked.
-     *
-     * @warning
-     * Empty components aren't explicitly instantiated. Therefore, this function
-     * isn't available for them.
      *
      * @tparam Compare Type of comparison function object.
      * @tparam Sort Type of sort function object.
@@ -998,7 +1112,7 @@ public:
      * @param args Arguments to forward to the sort function object, if any.
      */
     template<typename Compare, typename Sort = std_sort, typename... Args>
-    void sort([[maybe_unused]] Compare compare, [[maybe_unused]] Sort sort = Sort{}, [[maybe_unused]] Args &&... args) {
+    void sort(Compare compare, Sort sort = Sort{}, Args &&... args) {
         static_assert(!std::is_empty_v<object_type>);
 
         std::vector<size_type> copy(instances.size());
@@ -1047,7 +1161,7 @@ public:
      *
      * @param other The sparse sets that imposes the order of the entities.
      */
-    void respect(const sparse_set<Entity> &other) ENTT_NOEXCEPT {
+    void respect(const sparse_set<Entity> &other) ENTT_NOEXCEPT override {
         if constexpr(std::is_empty_v<object_type>) {
             underlying_type::respect(other);
         } else {

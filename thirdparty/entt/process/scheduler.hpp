@@ -4,7 +4,6 @@
 
 #include <vector>
 #include <memory>
-#include <cassert>
 #include <utility>
 #include <algorithm>
 #include <type_traits>
@@ -42,8 +41,8 @@ namespace entt {
  * @tparam Delta Type to use to provide elapsed time.
  */
 template<typename Delta>
-class scheduler final {
-    struct process_handler final {
+class scheduler {
+    struct process_handler {
         using instance_type = std::unique_ptr<void, void(*)(void *)>;
         using update_fn_type = bool(process_handler &, Delta, void *);
         using abort_fn_type = void(process_handler &, bool);
@@ -55,11 +54,11 @@ class scheduler final {
         next_type next;
     };
 
-    struct continuation final {
-        continuation(process_handler *handler)
-            : handler{handler}
+    struct continuation {
+        continuation(process_handler *ref)
+            : handler{ref}
         {
-            assert(handler);
+            ENTT_ASSERT(handler);
         }
 
         template<typename Proc, typename... Args>
@@ -90,7 +89,8 @@ class scheduler final {
         if(dead) {
             if(handler.next && !process->rejected()) {
                 handler = std::move(*handler.next);
-                dead = handler.update(handler, delta, data);
+                // forces the process to exit the uninitialized state
+                dead = handler.update(handler, {}, nullptr);
             } else {
                 handler.instance.reset();
             }
@@ -116,13 +116,9 @@ public:
     /*! @brief Default constructor. */
     scheduler() ENTT_NOEXCEPT = default;
 
-    /*! @brief Copying a scheduler isn't allowed. */
-    scheduler(const scheduler &) = delete;
     /*! @brief Default move constructor. */
     scheduler(scheduler &&) = default;
 
-    /*! @brief Copying a scheduler isn't allowed. @return This scheduler. */
-    scheduler & operator=(const scheduler &) = delete;
     /*! @brief Default move assignment operator. @return This scheduler. */
     scheduler & operator=(scheduler &&) = default;
 
@@ -182,6 +178,8 @@ public:
         static_assert(std::is_base_of_v<process<Proc, Delta>, Proc>);
         auto proc = typename process_handler::instance_type{new Proc{std::forward<Args>(args)...}, &scheduler::deleter<Proc>};
         process_handler handler{std::move(proc), &scheduler::update<Proc>, &scheduler::abort<Proc>, nullptr};
+        // forces the process to exit the uninitialized state
+        handler.update(handler, {}, nullptr);
         return continuation{&handlers.emplace_back(std::move(handler))};
     }
 
@@ -194,12 +192,13 @@ public:
      * following:
      *
      * @code{.cpp}
-     * void(Delta delta, auto succeed, auto fail);
+     * void(Delta delta, void *data, auto succeed, auto fail);
      * @endcode
      *
      * Where:
      *
      * * `delta` is the elapsed time.
+     * * `data` is an opaque pointer to user data if any, `nullptr` otherwise.
      * * `succeed` is a function to call when a process terminates with success.
      * * `fail` is a function to call when a process terminates with errors.
      *
