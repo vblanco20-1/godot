@@ -58,6 +58,7 @@ constexpr exclude_t<Type...> exclude{};
  */
 template<typename Entity>
 class basic_registry {
+public:
     using context_family = family<struct internal_registry_context_family>;
     using component_family = family<struct internal_registry_component_family>;
     using signal_type = sigh<void(basic_registry &, const Entity)>;

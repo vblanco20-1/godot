@@ -11,5 +11,6 @@ bool profilertest();
 #define SCOPE_PROFILE_GPU(name) ZoneScoped //rmt_ScopedOpenGLSample(name)
 #define PROFILER_INIT() //g_Remotery = nullptr; rmt_CreateGlobalInstance(&g_Remotery);//rmt_BindOpenGL();
 #define PROFILER_SHUTDOWN() //rmt_DestroyGlobalInstance(g_Remotery);
-#define PROFILER_FLIP() FrameMark
-
+//#define PROFILER_FLIP() FrameMark
+#define PROFILER_STARTFRAME(name) FrameMarkStart(name)
+#define PROFILER_ENDFRAME(name) FrameMarkEnd(name)

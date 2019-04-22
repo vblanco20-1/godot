@@ -463,6 +463,7 @@ void RasterizerGLES2::end_frame(bool p_swap_buffers) {
 		}
 	}
 
+	
 	if (p_swap_buffers)
 		OS::get_singleton()->swap_buffers();
 	else

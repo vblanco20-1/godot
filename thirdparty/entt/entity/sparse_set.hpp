@@ -549,7 +549,7 @@ public:
         return std::make_unique<sparse_set>(*this);
     }
 
-private:
+public:
     std::vector<std::pair<std::unique_ptr<entity_type[]>, size_type>> reverse;
     std::vector<entity_type> direct;
 };

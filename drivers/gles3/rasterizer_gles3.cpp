@@ -195,7 +195,7 @@ void RasterizerGLES3::initialize() {
 }
 
 void RasterizerGLES3::begin_frame(double frame_step) {
-
+	PROFILER_STARTFRAME("rasterizer");
 	time_total += frame_step;
 
 	if (frame_step == 0) {
@@ -403,10 +403,12 @@ void RasterizerGLES3::end_frame(bool p_swap_buffers) {
 		}
 	}
 
+	SCOPE_PROFILE(GL_Sync)
 	if (p_swap_buffers)
 		OS::get_singleton()->swap_buffers();
 	else
 		glFinish();
+	PROFILER_ENDFRAME("rasterizer");
 }
 
 void RasterizerGLES3::finalize() {

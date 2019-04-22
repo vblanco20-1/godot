@@ -41,6 +41,7 @@
 #include "core/self_list.h"
 #include "servers/arvr/arvr_interface.h"
 #include <vector>
+#include "thirdparty/entt/entt.hpp"
 
 
 class VisualServerScene {
@@ -134,6 +135,11 @@ public:
 
 		SelfList<Instance>::List instances;
 
+		entt::registry entity_list;
+
+		void insert_instance(RID instance);
+		void remove_instance(RID instance);
+
 		Scenario() { debug = VS::SCENARIO_DEBUG_DISABLED; }
 	};
 
@@ -162,7 +168,7 @@ public:
 		//scenario stuff
 		OctreeElementID octree_id;
 		Scenario *scenario;
-		SelfList<Instance> scenario_item;
+		//SelfList<Instance> scenario_item;
 
 		////aabb stuff
 		//bool update_aabb;
@@ -196,8 +202,8 @@ public:
 			singleton->_instance_queue_update(this, p_aabb, p_materials);
 		}
 
-		Instance() :
-				scenario_item(this)
+		Instance()// :
+			//	scenario_item(this)
 				{
 
 			octree_id = 0;

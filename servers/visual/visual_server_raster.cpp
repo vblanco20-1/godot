@@ -39,6 +39,7 @@
 #include "visual_server_scene.h"
 #include "core/ecs_registry.h"
 
+#include "main/profiler.h"
 // careful, these may run in different threads than the visual server
 
 int VisualServerRaster::changes = 0;
@@ -94,19 +95,23 @@ void VisualServerRaster::request_frame_drawn_callback(Object *p_where, const Str
 }
 
 void VisualServerRaster::draw(bool p_swap_buffers, double frame_step) {
-
+	SCOPE_PROFILE(draw_frame)
 	//needs to be done before changes is reset to 0, to not force the editor to redraw
 	VS::get_singleton()->emit_signal("frame_pre_draw");
 
 	changes = 0;
 
 	VSG::rasterizer->begin_frame(frame_step);
-
+	
+	PROFILER_STARTFRAME("viewport");
 	VSG::scene->update_dirty_instances(); //update scene stuff
 
+	
 	VSG::viewport->draw_viewports();
+	
 	VSG::scene->render_probes();
 	_draw_margins();
+	PROFILER_ENDFRAME("viewport");
 	VSG::rasterizer->end_frame(p_swap_buffers);
 
 	while (frame_drawn_callbacks.front()) {
@@ -124,7 +129,7 @@ void VisualServerRaster::draw(bool p_swap_buffers, double frame_step) {
 
 		frame_drawn_callbacks.pop_front();
 	}
-
+	
 	VS::get_singleton()->emit_signal("frame_post_draw");
 }
 void VisualServerRaster::sync() {
