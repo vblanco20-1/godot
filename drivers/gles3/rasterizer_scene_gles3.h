@@ -746,9 +746,9 @@ public:
 				//}
 
 				{
-				SCOPE_PROFILE(STD_Sort);
+					SCOPE_PROFILE(STD_Sort);
 				
-					std::sort(elements, elements + element_count, [](auto A, auto B) {
+					std::sort(/*std::execution::par,*/elements, elements + element_count, [](auto A, auto B) {
 						return A->sort_key < B->sort_key;
 					});
 				}

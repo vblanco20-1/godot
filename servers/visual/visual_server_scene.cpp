@@ -2433,19 +2433,22 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 
 					return 0;
 				});
-
+		instance_cull_count = 0;
 		{
 			SCOPE_PROFILE(MainFrustrumCull);
+			//octree cull
 			//instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
-			instance_cull_count = 0;
+
+
+			//for loop
 			scenario->entity_list.group<CullAABB, InstanceComponent, Visible>().each(
 
-					[this, &planes](auto entity, CullAABB &bounds, InstanceComponent &inst, Visible& vis) {
+					[this, &planes](auto entity, CullAABB &bounds, InstanceComponent &inst, Visible &vis) {
 						if (bounds.aabb.intersects_convex_shape(&planes[0], 6)) {
 							instance_cull_result[instance_cull_count] = inst.instance;
 							instance_cull_count++;
 						}
-					});
+ 					});
 		}
 
 		//std::vector<EntityID> FrustrumCullResult;
@@ -2495,20 +2498,18 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 		//
 		//	//stuff
 		//}
-
 		{
 			SCOPE_PROFILE(InstancesCull);
 			for (int i = 0; i < instance_cull_count; i++) {
 
-				Instance *ins = instance_cull_result[i];
-				const bool bIsVisible = has_component<Visible>(ins->self);
+				Instance *ins = instance_cull_result[i];				
 
 				bool keep = false;
 
 				if ((camera_layer_mask & ins->layer_mask) == 0) {
 
 					//failure
-				} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE && bIsVisible) {
+				} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE) {
 
 					if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
 
@@ -2537,14 +2538,14 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 						}
 					}
 
-				} else if (ins->base_type == VS::INSTANCE_GI_PROBE && bIsVisible) {
+				} else if (ins->base_type == VS::INSTANCE_GI_PROBE) {
 
 					InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
 					if (!gi_probe->update_element.in_list()) {
 						gi_probe_update_list.add(&gi_probe->update_element);
 					}
 
-				} else if (has_component<GeometryComponent>(ins->self) && bIsVisible && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+				} else if (has_component<GeometryComponent>(ins->self)&& ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
 
 					//get_component<GeometryComponent>(ins->self).
 
@@ -2623,7 +2624,8 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 					SWAP(instance_cull_result[i], instance_cull_result[instance_cull_count]);
 					i--;
 					ins->last_render_pass = 0; // make invalid
-				} else {
+				}
+				else {
 
 					ins->last_render_pass = render_pass;
 				}
@@ -2680,15 +2682,19 @@ void VisualServerScene::instance_set_visible(RID p_instance, bool p_visible) {
 		//
 		//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 
-		while (ShadowWorkQueue.try_dequeue(QItem)) {
-			SCOPE_PROFILE(ShadowRender_2)
-			if (QItem.bUpdateTransform) {
-				SCOPE_PROFILE(ShadowTransform)
-				VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
-			}
-			if (QItem.bRender) {
-				SCOPE_PROFILE(ShadowPass)
-				VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+		{
+			SCOPE_PROFILE(dequeue_shadows)
+
+			while (ShadowWorkQueue.try_dequeue(QItem)) {
+				SCOPE_PROFILE(ShadowRender_2)
+				if (QItem.bUpdateTransform) {
+					SCOPE_PROFILE(ShadowTransform)
+					VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+				}
+				if (QItem.bRender) {
+					SCOPE_PROFILE(ShadowPass)
+					VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+				}
 			}
 		}
 

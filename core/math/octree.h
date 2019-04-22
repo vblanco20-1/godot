@@ -37,6 +37,7 @@
 #include "core/math/vector3.h"
 #include "core/print_string.h"
 #include "core/variant.h"
+#include "main/profiler.h"
 
 /**
 	@author Juan Linietsky <reduzio@gmail.com>
@@ -380,12 +381,12 @@ public:
 	T *get(OctreeElementID p_id) const;
 	int get_subindex(OctreeElementID p_id) const;
 
-	template<typename F>
-	void cull_convex_lambda(const Vector<Plane> &p_convex, F && functor, uint32_t p_mask = 0xFFFFFFFF)
-	{
+	template <typename F>
+	void cull_convex_lambda(const Vector<Plane> &p_convex, F &&functor, uint32_t p_mask = 0xFFFFFFFF) {
+		SCOPE_PROFILE(LambdaCull)
 		if (!root)
-			return ;
-		
+			return;
+
 		pass++;
 		_CullConvexData cdata;
 		cdata.planes = &p_convex[0];
@@ -395,11 +396,10 @@ public:
 		cdata.result_idx = nullptr;
 		cdata.mask = p_mask;
 
-		_cull_convex_lambda(root,functor, &cdata);
+		_cull_convex_lambda(root, functor, &cdata);
 	}
-	template<typename F>
-	void _cull_convex_lambda(Octant *p_octant, F && functor,_CullConvexData *p_cull)
-	{
+	template <typename F>
+	void _cull_convex_lambda(Octant *p_octant, F &&functor, _CullConvexData *p_cull) {
 		if (!p_octant->elements.empty()) {
 
 			typename List<Element *, AL>::Element *I;
@@ -409,7 +409,7 @@ public:
 
 				Element *e = I->get();
 
-				if (/*e->last_pass == pass || */(use_pairs && !(e->pairable_type & p_cull->mask)))
+				if (/*e->last_pass == pass || */ (use_pairs && !(e->pairable_type & p_cull->mask)))
 					continue;
 				//e->last_pass = pass;
 
@@ -429,7 +429,7 @@ public:
 
 				Element *e = I->get();
 
-				if (/*e->last_pass == pass || */(use_pairs && !(e->pairable_type & p_cull->mask)))
+				if (/*e->last_pass == pass || */ (use_pairs && !(e->pairable_type & p_cull->mask)))
 					continue;
 				//e->last_pass = pass;
 
@@ -443,7 +443,7 @@ public:
 		for (int i = 0; i < 8; i++) {
 
 			if (p_octant->children[i] && p_octant->children[i]->aabb.intersects_convex_shape(p_cull->planes, p_cull->plane_count)) {
-				_cull_convex_lambda(p_octant->children[i],functor, p_cull);
+				_cull_convex_lambda(p_octant->children[i], functor, p_cull);
 			}
 		}
 	}
