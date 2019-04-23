@@ -2199,6 +2199,50 @@ struct EntityIDQueueTraits : public moodycamel::ConcurrentQueueDefaultTraits {
 
 moodycamel::ConcurrentQueue<EntityID, EntityIDQueueTraits> FrustrumInstances;
 
+moodycamel::ConcurrentQueue<VisualServerScene::InstanceReflectionProbeData *> reflection_probe_instances;
+moodycamel::ConcurrentQueue<VisualServerScene::InstanceGIProbeData *> gi_probe_instances;
+moodycamel::ConcurrentQueue<VisualServerScene::Instance *, EntityIDQueueTraits> geometry_instances;
+
+template <typename T, typename QTraits, typename F>
+void dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
+	constexpr size_t blocksize = QTraits::BLOCK_SIZE;
+	T dequeued[blocksize];
+	//SCOPE_PROFILE(InstancesCull);
+	while (true) {
+		size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
+		if (num <= 0)
+			break;
+		else {
+			for (int i = 0; i < num; i++) {
+				functor(dequeued[i]);
+			}
+		}
+	}
+}
+
+template <typename T, typename QTraits, typename F>
+void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
+	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+
+	SCOPE_PROFILE(parallel_dequeue);
+
+		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
+				  T dequeued[blocksize];
+				  //SCOPE_PROFILE(InstancesCull);
+				  while (true) {
+					  size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
+					  if (num <= 0)
+						  break;
+					  else {
+						  for (int i = 0; i < num; i++) {
+							  functor(dequeued[i]);
+						  }
+					  }
+
+
+	} });
+}
 
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
 
@@ -2428,9 +2472,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	/* STEP 5 - PROCESS LIGHTS */
 
 	auto handle = std::async(std::launch::async,
-			[&]() { //sort pointlights to start becouse they flicker hard
+			[&]() { 
 				SCOPE_PROFILE(ShadowAsyncWork);
-				//std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+				
 				for (int i = 0; i < UpdateWork.size(); i++) {
 					ShadowUpdateWork &work = UpdateWork[i];
 					bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
@@ -2442,289 +2486,266 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			});
 	instance_cull_count = 0;
 	{
-		//FrustrumInstances.(scenario->entity_list.group<CullAABB, InstanceComponent, Visible>().size());
-		
 		{
-			SCOPE_PROFILE(MainFrustrumCull);
-			//octree cull
-			//instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+				SCOPE_PROFILE(MainFrustrumCull);
+		//octree cull
+		//instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
 
-			//for loop
-				auto &group = scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
-				std::for_each(std::execution::par, group.begin(), group.end(),
-						[this, &planes,&group](auto e) {
-
-							if (group.get<CullAABB>(e).aabb.intersects_convex_shape(&planes[0], 6)) {
-								FrustrumInstances.enqueue(group.get<InstanceComponent>(e).self_ID.eid);
-								//instance_cull_result[instance_cull_count] = inst.instance;
-								//instance_cull_count++;
-							}
-				});
-			
+		//for loop
+		auto &group = scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
+		std::for_each(std::execution::par, group.begin(), group.end(),
+			[this, &planes, &group](auto e) {
+				if (group.get<CullAABB>(e).aabb.intersects_convex_shape(&planes[0], 6)) {
+					FrustrumInstances.enqueue(group.get<InstanceComponent>(e).self_ID.eid);
+				}
+			});
 		}
 
-		//std::vector<EntityID> FrustrumCullResult;
-		//FrustrumCullResult.reserve(instance_cull_count);
-		//
-		//for (int i = 0; i < instance_cull_count; i++) {
-		//	FrustrumCullResult.push_back(instance_cull_result[i]->self.eid);
-		//}
-		//
-		//auto VisiblePool = registry.pool<Visible>();
-		//auto GeoPool = registry.pool<GeometryComponent>();
-		//
-		//size_t VisibleSize = VisiblePool.reverse.size();
-		//size_t GeoSize = GeoPool.reverse.size();
-		//
-		//size_t max_pages = std::max(VisibleSize, GeoSize);
-		//vector<bool> Pages;
-		//Pages.reserve(max_pages);
-		//
-		//
-		//for (int i = 0; i < max_pages; i++) {
-		//	bool validpage = true;
-		//	validpage &= VisiblePool->reverse[i].first != nullptr;
-		//	validpage &= GeoPool->reverse[i].first != nullptr;
-		//	Pages[i] = validpage;
-		//}
-		//
-		//const auto per_page = VisiblePool->per_page;
-		//
-		//
-		//std::vector<EntityID> result_view;
-		//for (auto eid : FrustrumCullResult){
-		//
-		//	const auto identifier = eid & registry.entity_mask;
-		//	const auto page = (identifier / per_page);
-		//
-		//	if (Pages[page]) {
-		//		result_view.push_back(eid);
-		//	}
-		//}
+{
+	instance_cull_count = 0;
+	{
+		SCOPE_PROFILE(ProcessInstances);
+		parallel_dequeue_concurrent_queue(FrustrumInstances, [&, this](auto eid) {
+			//constexpr size_t blocksize = EntityIDQueueTraits::BLOCK_SIZE;
+			//EntityID dequeued[blocksize];
+			//SCOPE_PROFILE(InstancesCull);
+			//while (true) {
+			//	size_t num = FrustrumInstances.try_dequeue_bulk(dequeued, blocksize);
+			//	if (num <= 0)
+			//		break;
+			//	else {
+			//
+			//		for (int i = 0; i < num; i++) {
+			//			EntityID eid = dequeued[i];
+			InstanceComponent &instcmp = get_component<InstanceComponent>(eid);
+			Instance *ins = instcmp.instance; //instance_cull_result[i];
 
-		//auto FrustrumMeshes = VSG::ecs->registry.view_list<Visible, GeometryComponent>(FrustrumCullResult.begin(), FrustrumCullResult.end());
-		//
-		//for (auto e : FrustrumMeshes) {
-		//
-		//	GeometryComponent &Geo = FrustrumMeshes.get<GeometryComponent>(e);
-		//
-		//	//stuff
-		//}
+			bool keep = false;
 
-		{
-			instance_cull_count = 0;
-			constexpr size_t blocksize = EntityIDQueueTraits::BLOCK_SIZE;
-			EntityID dequeued[blocksize];
-			SCOPE_PROFILE(InstancesCull);
-			while (true) {
-				size_t num = FrustrumInstances.try_dequeue_bulk(dequeued, blocksize);
-				if (num <= 0)
-					break;
-				else {
+			if ((camera_layer_mask & ins->layer_mask) == 0) {
 
-					for (int i = 0; i < num; i++) {
-						EntityID eid = dequeued[i];
-						InstanceComponent &instcmp = get_component<InstanceComponent>(eid);
-						Instance *ins = instcmp.instance; //instance_cull_result[i];
+				//failure
+			} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE) {
+				InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(ins->base_data);
 
-						bool keep = false;
+				if (p_reflection_probe != reflection_probe->instance) {
+					//avoid entering The Matrix
 
-						if ((camera_layer_mask & ins->layer_mask) == 0) {
+					if (!reflection_probe->geometries.empty()) {
+						//do not add this light if no geometry is affected by it..
 
-							//failure
-						} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE) {
-
-							if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
-
-								InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(ins->base_data);
-
-								if (p_reflection_probe != reflection_probe->instance) {
-									//avoid entering The Matrix
-
-									if (!reflection_probe->geometries.empty()) {
-										//do not add this light if no geometry is affected by it..
-
-										if (reflection_probe->reflection_dirty || VSG::scene_render->reflection_probe_instance_needs_redraw(reflection_probe->instance)) {
-											if (!reflection_probe->update_list.in_list()) {
-												reflection_probe->render_step = 0;
-												reflection_probe_render_list.add_last(&reflection_probe->update_list);
-											}
-
-											reflection_probe->reflection_dirty = false;
-										}
-
-										if (VSG::scene_render->reflection_probe_instance_has_reflection(reflection_probe->instance)) {
-											reflection_probe_instance_cull_result[reflection_probe_cull_count] = reflection_probe->instance;
-											reflection_probe_cull_count++;
-										}
-									}
-								}
-							}
-
-						} else if (ins->base_type == VS::INSTANCE_GI_PROBE) {
-
-							InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
-							if (!gi_probe->update_element.in_list()) {
-								gi_probe_update_list.add(&gi_probe->update_element);
-							}
-
-						} else if (has_component<GeometryComponent>(eid) && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
-							GeometryComponent &geocomp = get_component<GeometryComponent>(eid);
-							//get_component<GeometryComponent>(ins->self).
-
-							keep = true;
-
-							InstanceGeometryData *geom = get_instance_geometry(ins->self);
-
-							if (ins->redraw_if_visible) {
-								VisualServerRaster::redraw_request();
-							}
-
-							if (ins->base_type == VS::INSTANCE_PARTICLES) {
-								//particles visible? process them
-								if (VSG::storage->particles_is_inactive(ins->base)) {
-									//but if nothing is going on, don't do it.
-									keep = false;
-								} else {
-									VSG::storage->particles_request_process(ins->base);
-									//particles visible? request redraw
-									VisualServerRaster::redraw_request();
-								}
-							}
-
-							if (geocomp.lighting_dirty) {
-								int l = 0;
-								//only called when lights AABB enter/exit this geometry
-								ins->light_instances.resize(geom->lighting.size());
-
-								for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-
-									InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-
-									ins->light_instances.write[l++] = light->instance;
-								}
-
-								geocomp.lighting_dirty = false;
-							}
-
-							if (geocomp.reflection_dirty) {
-								int l = 0;
-								//only called when reflection probe AABB enter/exit this geometry
-								ins->reflection_probe_instances.resize(geom->reflection_probes.size());
-
-								for (List<Instance *>::Element *E = geom->reflection_probes.front(); E; E = E->next()) {
-
-									InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(E->get()->base_data);
-
-									ins->reflection_probe_instances.write[l++] = reflection_probe->instance;
-								}
-
-								geocomp.reflection_dirty = false;
-							}
-
-							if (geocomp.gi_probes_dirty) {
-								int l = 0;
-								//only called when reflection probe AABB enter/exit this geometry
-								ins->gi_probe_instances.resize(geom->gi_probes.size());
-
-								for (List<Instance *>::Element *E = geom->gi_probes.front(); E; E = E->next()) {
-
-									InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(E->get()->base_data);
-
-									ins->gi_probe_instances.write[l++] = gi_probe->probe_instance;
-								}
-
-								geocomp.gi_probes_dirty = false;
-							}
-
-							ins->depth = near_plane.distance_to(ins->transform.origin);
-							ins->depth_layer = CLAMP(int(ins->depth * 16 / z_far), 0, 15);
-						}
-
-						if (!keep) {
-							// remove, no reason to keep
-							//instance_cull_count--;
-							//SWAP(, instance_cull_result[instance_cull_count]);
-							//i--;
-							ins->last_render_pass = 0; // make invalid
-						} else {
-
-							instance_cull_result[instance_cull_count] = ins;
-							instance_cull_count++;
-							ins->last_render_pass = render_pass;
-						}
+						reflection_probe_instances.enqueue(reflection_probe);
 					}
 				}
+
+			} else if (ins->base_type == VS::INSTANCE_GI_PROBE) {
+
+				InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
+				if (!gi_probe->update_element.in_list()) {
+					gi_probe_instances.enqueue(gi_probe);
+					//gi_probe_update_list.add(&gi_probe->update_element);
+				}
+
+			} else if (has_component<GeometryComponent>(eid) && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
+				GeometryComponent &geocomp = get_component<GeometryComponent>(eid);
+				//get_component<GeometryComponent>(ins->self).
+
+				keep = true;
+
+				InstanceGeometryData *geom = get_instance_geometry(ins->self);
+
+				if (ins->redraw_if_visible) {
+					//VisualServerRaster::redraw_request();
+				}
+
+				if (ins->base_type == VS::INSTANCE_PARTICLES) {
+					//particles visible? process them
+					if (VSG::storage->particles_is_inactive(ins->base)) {
+						//but if nothing is going on, don't do it.
+						keep = false;
+					} else {
+						//VSG::storage->particles_request_process(ins->base);
+						//particles visible? request redraw
+						//VisualServerRaster::redraw_request();
+					}
+				}
+
+				if (geocomp.lighting_dirty) {
+					int l = 0;
+					//only called when lights AABB enter/exit this geometry
+					ins->light_instances.resize(geom->lighting.size());
+
+					for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
+
+						InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+
+						ins->light_instances.write[l++] = light->instance;
+					}
+
+					geocomp.lighting_dirty = false;
+				}
+
+				if (geocomp.reflection_dirty) {
+					int l = 0;
+					//only called when reflection probe AABB enter/exit this geometry
+					ins->reflection_probe_instances.resize(geom->reflection_probes.size());
+
+					for (List<Instance *>::Element *E = geom->reflection_probes.front(); E; E = E->next()) {
+
+						InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(E->get()->base_data);
+
+						ins->reflection_probe_instances.write[l++] = reflection_probe->instance;
+					}
+
+					geocomp.reflection_dirty = false;
+				}
+
+				if (geocomp.gi_probes_dirty) {
+					int l = 0;
+					//only called when reflection probe AABB enter/exit this geometry
+					ins->gi_probe_instances.resize(geom->gi_probes.size());
+
+					for (List<Instance *>::Element *E = geom->gi_probes.front(); E; E = E->next()) {
+
+						InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(E->get()->base_data);
+
+						ins->gi_probe_instances.write[l++] = gi_probe->probe_instance;
+					}
+
+					geocomp.gi_probes_dirty = false;
+				}
+
+				ins->depth = near_plane.distance_to(ins->transform.origin);
+				ins->depth_layer = CLAMP(int(ins->depth * 16 / z_far), 0, 15);
 			}
-		}
+			if (keep) {
+				geometry_instances.enqueue(ins);
+			}
+			//if (!keep) {
+			//	// remove, no reason to keep
+			//	//instance_cull_count--;
+			//	//SWAP(, instance_cull_result[instance_cull_count]);
+			//	//i--;
+			//	ins->last_render_pass = 0; // make invalid
+			//} else {
+			//
+			//	instance_cull_result[instance_cull_count] = ins;
+			//	instance_cull_count++;
+			//	ins->last_render_pass = render_pass;
+			//}
+		});
 	}
-	//static bool bParallelShadowcast = true;
-	//if (UpdateWork.size() > 2 && bParallelShadowcast)
-	//{
-	//
-	//	//execute one to prime the queue
-	//	{
-	//		ShadowUpdateWork & work = UpdateWork[0];
-	//
-	//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-	//			work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-	//
-	//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-	//
-	//	}
-	//
-	//
-	//
-	//	//// Wait until sends data
-	//	//std::unique_lock<std::mutex> lk(m);
-	//	//cv.wait(lk, [] {return ready; });
-	//
-	//	//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
-	//	while (ShadowWorkQueue.try_dequeue(QItem))
-	//	{
-	//
-	//		 {
-	//			SCOPE_PROFILE(ShadowRenderasync)
-	//			if (QItem.bUpdateTransform) {
-	//				SCOPE_PROFILE(ShadowTransform)
-	//					VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
-	//
-	//			}
-	//			if (QItem.bRender) {
-	//				SCOPE_PROFILE(ShadowPass)
-	//					VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
-	//			}
-	//		}
-	//	}
-	//}
-	//else {
-	//	std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-	//
-	//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-	//
-	//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-	//	});
-	//	}
-	//
-	//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
 
 	{
-		SCOPE_PROFILE(dequeue_shadows)
 
-		while (ShadowWorkQueue.try_dequeue(QItem)) {
-			SCOPE_PROFILE(ShadowRender_2)
-			if (QItem.bUpdateTransform) {
-				SCOPE_PROFILE(ShadowTransform)
-				VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+		SCOPE_PROFILE(dequeue_gi_probes);
+		dequeue_concurrent_queue(gi_probe_instances, [this](auto *gi_probe) {
+			gi_probe_update_list.add(&gi_probe->update_element);
+		});
+	}
+	{
+
+		SCOPE_PROFILE(dequeue_reflection_probes);
+		dequeue_concurrent_queue(reflection_probe_instances, [this](auto *reflection_probe) {
+			if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
+				if (reflection_probe->reflection_dirty || VSG::scene_render->reflection_probe_instance_needs_redraw(reflection_probe->instance)) {
+					if (!reflection_probe->update_list.in_list()) {
+						reflection_probe->render_step = 0;
+						reflection_probe_render_list.add_last(&reflection_probe->update_list);
+					}
+
+					reflection_probe->reflection_dirty = false;
+				}
+
+				if (VSG::scene_render->reflection_probe_instance_has_reflection(reflection_probe->instance)) {
+					reflection_probe_instance_cull_result[reflection_probe_cull_count] = reflection_probe->instance;
+					reflection_probe_cull_count++;
+				}
 			}
-			if (QItem.bRender) {
-				SCOPE_PROFILE(ShadowPass)
-				VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+		});
+	}
+	{
+
+		SCOPE_PROFILE(dequeue_geometry);
+		dequeue_concurrent_queue(geometry_instances, [this](auto *ins) {
+			if (ins->base_type == VS::INSTANCE_PARTICLES) {
+				VSG::storage->particles_request_process(ins->base);
 			}
+
+			instance_cull_result[instance_cull_count] = ins;
+			instance_cull_count++;
+			ins->last_render_pass = render_pass;
+		});
+	}
+}
+}
+//static bool bParallelShadowcast = true;
+//if (UpdateWork.size() > 2 && bParallelShadowcast)
+//{
+//
+//	//execute one to prime the queue
+//	{
+//		ShadowUpdateWork & work = UpdateWork[0];
+//
+//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
+//			work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+//
+//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+//
+//	}
+//
+//
+//
+//	//// Wait until sends data
+//	//std::unique_lock<std::mutex> lk(m);
+//	//cv.wait(lk, [] {return ready; });
+//
+//	//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
+//	while (ShadowWorkQueue.try_dequeue(QItem))
+//	{
+//
+//		 {
+//			SCOPE_PROFILE(ShadowRenderasync)
+//			if (QItem.bUpdateTransform) {
+//				SCOPE_PROFILE(ShadowTransform)
+//					VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+//
+//			}
+//			if (QItem.bRender) {
+//				SCOPE_PROFILE(ShadowPass)
+//					VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+//			}
+//		}
+//	}
+//}
+//else {
+//	std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
+//
+//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+//
+//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+//	});
+//	}
+//
+//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
+
+{
+	SCOPE_PROFILE(dequeue_shadows)
+
+	while (ShadowWorkQueue.try_dequeue(QItem)) {
+		SCOPE_PROFILE(ShadowRender_2)
+		if (QItem.bUpdateTransform) {
+			SCOPE_PROFILE(ShadowTransform)
+			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+		}
+		if (QItem.bRender) {
+			SCOPE_PROFILE(ShadowPass)
+			VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
 		}
 	}
+}
 
-	UpdateWork.clear();
+UpdateWork.clear();
 }
 
 void VisualServerScene::_render_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
