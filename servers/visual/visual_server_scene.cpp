@@ -344,156 +344,117 @@ bool VisualServerScene::owns_camera(RID p_camera) {
 
 void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance *p_A, int, OctreeElementID, Instance *p_B, int) {
 
-	//VisualServerScene *self = (VisualServerScene*)p_self;
-	//Instance *A = p_A;
-	//Instance *B = p_B;
-	//
-	////instance indices are designed so greater always contains lesser
-	//if (A->base_type > B->base_type) {
-	//	SWAP(A, B); //lesser always first
-	//}
-	//
-	//if (has_component<LightComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
-	//
-	//	LightComponent &ligh_comp = get_component<LightComponent>(B->self);
-	//	GeometryComponent &geo_comp = get_component<GeometryComponent>(A->self);
-	//
-	//	InstanceLightData *light = ligh_comp.Data;
-	//	InstanceGeometryData *geom = geo_comp.Data;
-	//
-	//	InstanceLightData::PairInfo pinfo;
-	//	pinfo.geometry = A;
-	//	pinfo.L = geom->lighting.push_back(B);
-	//
-	//	List<InstanceLightData::PairInfo>::Element *E = light->geometries.push_back(pinfo);
-	//
-	//	if (geo_comp.can_cast_shadows) {
-	//
-	//		ligh_comp.shadow_dirty = true;
-	//	}
-	//	geo_comp.lighting_dirty = true;
-	//
-	//	return E; //this element should make freeing faster
-	//} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	InstanceReflectionProbeData::PairInfo pinfo;
-	//	pinfo.geometry = A;
-	//	pinfo.L = geom->reflection_probes.push_back(B);
-	//
-	//	List<InstanceReflectionProbeData::PairInfo>::Element *E = reflection_probe->geometries.push_back(pinfo);
-	//
-	//	get_component<GeometryComponent>(A->self).reflection_dirty = true;
-	//
-	//	return E; //this element should make freeing faster
-	//} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	InstanceLightmapCaptureData::PairInfo pinfo;
-	//	pinfo.geometry = A;
-	//	pinfo.L = geom->lightmap_captures.push_back(B);
-	//
-	//	List<InstanceLightmapCaptureData::PairInfo>::Element *E = lightmap_capture->geometries.push_back(pinfo);
-	//	((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
-	//
-	//	return E; //this element should make freeing faster
-	//} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	InstanceGIProbeData::PairInfo pinfo;
-	//	pinfo.geometry = A;
-	//	pinfo.L = geom->gi_probes.push_back(B);
-	//
-	//	List<InstanceGIProbeData::PairInfo>::Element *E = gi_probe->geometries.push_back(pinfo);
-	//
-	//	get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
-	//
-	//	return E; //this element should make freeing faster
-	//
-	//} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
-	//
-	//	InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-	//	return gi_probe->lights.insert(A);
-	//}
+	VisualServerScene *self = (VisualServerScene*)p_self;
+	Instance *A = p_A;
+	Instance *B = p_B;
+	
+	//instance indices are designed so greater always contains lesser
+	if (A->base_type > B->base_type) {
+		SWAP(A, B); //lesser always first
+	}
+	
+	if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		InstanceReflectionProbeData::PairInfo pinfo;
+		pinfo.geometry = A;
+		pinfo.L = geom->reflection_probes.push_back(B);
+	
+		List<InstanceReflectionProbeData::PairInfo>::Element *E = reflection_probe->geometries.push_back(pinfo);
+	
+		get_component<GeometryComponent>(A->self).reflection_dirty = true;
+	
+		return E; //this element should make freeing faster
+	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		InstanceLightmapCaptureData::PairInfo pinfo;
+		pinfo.geometry = A;
+		pinfo.L = geom->lightmap_captures.push_back(B);
+	
+		List<InstanceLightmapCaptureData::PairInfo>::Element *E = lightmap_capture->geometries.push_back(pinfo);
+		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
+	
+		return E; //this element should make freeing faster
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		InstanceGIProbeData::PairInfo pinfo;
+		pinfo.geometry = A;
+		pinfo.L = geom->gi_probes.push_back(B);
+	
+		List<InstanceGIProbeData::PairInfo>::Element *E = gi_probe->geometries.push_back(pinfo);
+	
+		get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
+	
+		return E; //this element should make freeing faster
+	
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
+	
+		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
+		return gi_probe->lights.insert(A);
+	}
 
 	return NULL;
 }
 void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance *p_A, int, OctreeElementID, Instance *p_B, int, void *udata) {
 
-	//VisualServerScene *self = (VisualServerScene*)p_self;
-	//Instance *A = p_A;
-	//Instance *B = p_B;
-	//
-	////instance indices are designed so greater always contains lesser
-	//if (A->base_type > B->base_type) {
-	//	SWAP(A, B); //lesser always first
-	//}
-	//
-	//if (has_component<LightComponent>(B->self) && (has_component<GeometryComponent>(A->self))) {
-	//
-	//	LightComponent &ligh_comp = get_component<LightComponent>(B->self);
-	//	GeometryComponent &geo_comp = get_component<GeometryComponent>(A->self);
-	//
-	//	InstanceLightData *light = ligh_comp.Data;
-	//	InstanceGeometryData *geom = geo_comp.Data;
-	//
-	//	List<InstanceLightData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightData::PairInfo>::Element *>(udata);
-	//
-	//	geom->lighting.erase(E->get().L);
-	//	light->geometries.erase(E);
-	//
-	//	if (geo_comp.can_cast_shadows) {
-	//		ligh_comp.shadow_dirty = true;
-	//	}
-	//	geo_comp.lighting_dirty = true;
-	//
-	//} else if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	List<InstanceReflectionProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceReflectionProbeData::PairInfo>::Element *>(udata);
-	//
-	//	geom->reflection_probes.erase(E->get().L);
-	//	reflection_probe->geometries.erase(E);
-	//
-	//	get_component<GeometryComponent>(A->self).reflection_dirty = true;
-	//} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	List<InstanceLightmapCaptureData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightmapCaptureData::PairInfo>::Element *>(udata);
-	//
-	//	geom->lightmap_captures.erase(E->get().L);
-	//	lightmap_capture->geometries.erase(E);
-	//	((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
-	//
-	//} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
-	//
-	//	InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-	//	InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
-	//
-	//	List<InstanceGIProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceGIProbeData::PairInfo>::Element *>(udata);
-	//
-	//	geom->gi_probes.erase(E->get().L);
-	//	gi_probe->geometries.erase(E);
-	//
-	//	get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
-	//
-	//} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
-	//
-	//	InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
-	//	Set<Instance *>::Element *E = reinterpret_cast<Set<Instance *>::Element *>(udata);
-	//
-	//	gi_probe->lights.erase(E);
-	//}
+	VisualServerScene *self = (VisualServerScene*)p_self;
+	Instance *A = p_A;
+	Instance *B = p_B;
+	
+	//instance indices are designed so greater always contains lesser
+	if (A->base_type > B->base_type) {
+		SWAP(A, B); //lesser always first
+	}
+	
+	if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		List<InstanceReflectionProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceReflectionProbeData::PairInfo>::Element *>(udata);
+	
+		geom->reflection_probes.erase(E->get().L);
+		reflection_probe->geometries.erase(E);
+	
+		get_component<GeometryComponent>(A->self).reflection_dirty = true;
+	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		List<InstanceLightmapCaptureData::PairInfo>::Element *E = reinterpret_cast<List<InstanceLightmapCaptureData::PairInfo>::Element *>(udata);
+	
+		geom->lightmap_captures.erase(E->get().L);
+		lightmap_capture->geometries.erase(E);
+		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
+	
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
+	
+		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
+		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
+	
+		List<InstanceGIProbeData::PairInfo>::Element *E = reinterpret_cast<List<InstanceGIProbeData::PairInfo>::Element *>(udata);
+	
+		geom->gi_probes.erase(E->get().L);
+		gi_probe->geometries.erase(E);
+	
+		get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
+	
+	} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
+	
+		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
+		Set<Instance *>::Element *E = reinterpret_cast<Set<Instance *>::Element *>(udata);
+	
+		gi_probe->lights.erase(E);
+	}
 }
 
 RID VisualServerScene::scenario_create() {
@@ -503,8 +464,8 @@ RID VisualServerScene::scenario_create() {
 	RID scenario_rid = scenario_owner.make_rid(scenario);
 	scenario->self = scenario_rid;
 
-	//scenario->octree.set_pair_callback(_instance_pair, this);
-	//scenario->octree.set_unpair_callback(_instance_unpair, this);
+	scenario->octree.set_pair_callback(_instance_pair, this);
+	scenario->octree.set_unpair_callback(_instance_unpair, this);
 	scenario->reflection_probe_shadow_atlas = VSG::scene_render->shadow_atlas_create();
 	VSG::scene_render->shadow_atlas_set_size(scenario->reflection_probe_shadow_atlas, 1024); //make enough shadows for close distance, don't bother with rest
 	VSG::scene_render->shadow_atlas_set_quadrant_subdivision(scenario->reflection_probe_shadow_atlas, 0, 4);
@@ -2045,7 +2006,7 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 }
 
 void VisualServerScene::render_camera(RID p_camera, RID p_scenario, Size2 p_viewport_size, RID p_shadow_atlas) {
-	SCOPE_PROFILE(render_camera);
+	AUTO_PROFILE;
 // render to mono camera
 #ifndef _3D_DISABLED
 
@@ -2243,7 +2204,7 @@ void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &
 
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
 
-	SCOPE_PROFILE(prepare_scene);
+	AUTO_PROFILE;
 	// Note, in stereo rendering:
 	// - p_cam_transform will be a transform in the middle of our two eyes
 	// - p_cam_projection is a wider frustrum that encompasses both eyes
@@ -2741,7 +2702,7 @@ UpdateWork.clear();
 }
 
 void VisualServerScene::_render_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-	SCOPE_PROFILE(render_scene);
+	AUTO_PROFILE;
 	Scenario *scenario = scenario_owner.getornull(p_scenario);
 
 	/* ENVIRONMENT */
