@@ -243,7 +243,7 @@ public:
 
 	struct InstanceGeometryData : public InstanceBaseData {
 
-		List<Instance *> lighting;
+		//List<Instance *> lighting;
 		//List<Instance *> lighting;
 		//bool lighting_dirty;
 		//bool can_cast_shadows;

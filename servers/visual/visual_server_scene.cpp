@@ -1210,14 +1210,14 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		InstanceGeometryData *geom = get_instance_geometry(p_instance->self); //static_cast<InstanceGeometryData *>(p_instance->base_data);
 		//make sure lights are updated if it casts shadow
 
-		if (get_component<GeometryComponent>(p_instance->self).can_cast_shadows) {
-			for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-				LightComponent &light_comp = get_component<LightComponent>(E->get()->self);
-				light_comp.shadow_dirty = true;
-				//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-				//light->shadow_dirty = true;
-			}
-		}
+		//if (get_component<GeometryComponent>(p_instance->self).can_cast_shadows) {
+		//	for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
+		//		LightComponent &light_comp = get_component<LightComponent>(E->get()->self);
+		//		light_comp.shadow_dirty = true;
+		//		//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+		//		//light->shadow_dirty = true;
+		//	}
+		//}
 
 		if (!p_instance->lightmap_capture && geom->lightmap_captures.size()) {
 			//affected by lightmap captures, must update capture info!
@@ -2224,24 +2224,21 @@ template <typename T, typename QTraits, typename F>
 void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
 	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
 	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
-
-	SCOPE_PROFILE(parallel_dequeue);
-
+		SCOPE_PROFILE(parallel_dequeue);
 		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
-				  T dequeued[blocksize];
-				  //SCOPE_PROFILE(InstancesCull);
-				  while (true) {
-					  size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
-					  if (num <= 0)
-						  break;
-					  else {
-						  for (int i = 0; i < num; i++) {
-							  functor(dequeued[i]);
-						  }
-					  }
+		T dequeued[blocksize];
 
-
-	} });
+		while (true) {
+			size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
+			if (num <= 0)
+				break;
+			else {
+				for (int i = 0; i < num; i++) {
+					functor(dequeued[i]);
+				}
+			}
+		}
+	});
 }
 
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
@@ -2287,6 +2284,12 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	//cull_lights
 	auto &reg = VSG::ecs->registry;
+
+	static std::vector<RID> view_lights;
+	static std::vector<AABB> view_lights_bounds;
+
+	view_lights.clear();
+	view_lights_bounds.clear();
 	auto light_view = reg.group<>(entt::get<InstanceBoundsComponent, LightComponent, Visible, InstanceComponent>);
 	for (auto entity : light_view) {
 
@@ -2302,7 +2305,10 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			InstanceLightData *light = light_comp.Data;
 			Instance *ins = inst_comp.instance;
 
-			if (!light->geometries.empty()) {
+			view_lights.push_back(light->instance);
+			view_lights_bounds.push_back(bound_comp.transformed_aabb);
+
+			//if (!light->geometries.empty()) {
 				//do not add this light if no geometry is affected by it..
 				light_cull_result[light_cull_count] = ins;
 				light_instance_cull_result[light_cull_count] = light->instance;
@@ -2311,7 +2317,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 
 				light_cull_count++;
-			}
+			//}
 		}
 	}
 
@@ -2472,9 +2478,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	/* STEP 5 - PROCESS LIGHTS */
 
 	auto handle = std::async(std::launch::async,
-			[&]() { 
+			[&]() {
 				SCOPE_PROFILE(ShadowAsyncWork);
-				
+
 				for (int i = 0; i < UpdateWork.size(); i++) {
 					ShadowUpdateWork &work = UpdateWork[i];
 					bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
@@ -2486,37 +2492,25 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			});
 	instance_cull_count = 0;
 	{
-		{
-				SCOPE_PROFILE(MainFrustrumCull);
-		//octree cull
-		//instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
+		{ SCOPE_PROFILE(MainFrustrumCull);
+	//octree cull
+	//instance_cull_count = scenario->octree.cull_convex(planes, instance_cull_result, MAX_INSTANCE_CULL);
 
-		//for loop
-		auto &group = scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
-		std::for_each(std::execution::par, group.begin(), group.end(),
+	//for loop
+	auto &group = scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
+	std::for_each(std::execution::par, group.begin(), group.end(),
 			[this, &planes, &group](auto e) {
 				if (group.get<CullAABB>(e).aabb.intersects_convex_shape(&planes[0], 6)) {
 					FrustrumInstances.enqueue(group.get<InstanceComponent>(e).self_ID.eid);
 				}
 			});
-		}
+}
 
 {
 	instance_cull_count = 0;
 	{
 		SCOPE_PROFILE(ProcessInstances);
 		parallel_dequeue_concurrent_queue(FrustrumInstances, [&, this](auto eid) {
-			//constexpr size_t blocksize = EntityIDQueueTraits::BLOCK_SIZE;
-			//EntityID dequeued[blocksize];
-			//SCOPE_PROFILE(InstancesCull);
-			//while (true) {
-			//	size_t num = FrustrumInstances.try_dequeue_bulk(dequeued, blocksize);
-			//	if (num <= 0)
-			//		break;
-			//	else {
-			//
-			//		for (int i = 0; i < num; i++) {
-			//			EntityID eid = dequeued[i];
 			InstanceComponent &instcmp = get_component<InstanceComponent>(eid);
 			Instance *ins = instcmp.instance; //instance_cull_result[i];
 
@@ -2548,6 +2542,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			} else if (has_component<GeometryComponent>(eid) && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
 				GeometryComponent &geocomp = get_component<GeometryComponent>(eid);
+				InstanceBoundsComponent &bounds = get_component<InstanceBoundsComponent>(eid);
 				//get_component<GeometryComponent>(ins->self).
 
 				keep = true;
@@ -2570,17 +2565,26 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					}
 				}
 
-				if (geocomp.lighting_dirty) {
+				if (true/*geocomp.lighting_dirty*/) {
 					int l = 0;
 					//only called when lights AABB enter/exit this geometry
-					ins->light_instances.resize(geom->lighting.size());
+					//ins->light_instances.resize(geom->lighting.size());
 
-					for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-
-						InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-
-						ins->light_instances.write[l++] = light->instance;
+					//for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
+					for (int i = 0; i < view_lights_bounds.size(); i++) {
+						if (l >= 8)
+						{
+							break;
+						}
+						else if  (bounds.transformed_aabb.intersects(view_lights_bounds[i])) {
+							ins->lights[l++] = view_lights[i];
+								
+							//ins->light_instances.write[l++] = view_lights[i];
+						}
+						//InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
 					}
+					ins->nlights = l;
+					//}
 
 					geocomp.lighting_dirty = false;
 				}
@@ -2621,18 +2625,6 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			if (keep) {
 				geometry_instances.enqueue(ins);
 			}
-			//if (!keep) {
-			//	// remove, no reason to keep
-			//	//instance_cull_count--;
-			//	//SWAP(, instance_cull_result[instance_cull_count]);
-			//	//i--;
-			//	ins->last_render_pass = 0; // make invalid
-			//} else {
-			//
-			//	instance_cull_result[instance_cull_count] = ins;
-			//	instance_cull_count++;
-			//	ins->last_render_pass = render_pass;
-			//}
 		});
 	}
 
@@ -3992,17 +3984,17 @@ void VisualServerScene::_update_instance_material(Instance *p_instance) {
 			}
 		}
 
-		if (can_cast_shadows != gcomp.can_cast_shadows) {
-			// ability to cast shadows change, let lights now
-			for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
-				LightComponent &light_comp = get_component<LightComponent>(E->get()->self);
-				light_comp.shadow_dirty = true;
-				// InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
-				// light->shadow_dirty = true;
-			}
-
-			gcomp.can_cast_shadows = can_cast_shadows;
-		}
+		//if (can_cast_shadows != gcomp.can_cast_shadows) {
+		//	// ability to cast shadows change, let lights now
+		//	for (List<Instance *>::Element *E = geom->lighting.front(); E; E = E->next()) {
+		//		LightComponent &light_comp = get_component<LightComponent>(E->get()->self);
+		//		light_comp.shadow_dirty = true;
+		//		// InstanceLightData *light = static_cast<InstanceLightData *>(E->get()->base_data);
+		//		// light->shadow_dirty = true;
+		//	}
+		//
+		//	gcomp.can_cast_shadows = can_cast_shadows;
+		//}
 
 		gcomp.material_is_animated = is_animated;
 	}

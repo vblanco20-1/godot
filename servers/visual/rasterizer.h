@@ -97,9 +97,11 @@ public:
 		//RID sampled_light;
 
 		Vector<RID> materials;
-		Vector<RID> light_instances;
+		//Vector<RID> light_instances;
 		Vector<RID> reflection_probe_instances;
 		Vector<RID> gi_probe_instances;
+		RID lights[8];
+		char nlights;
 
 		Vector<float> blend_values;
 

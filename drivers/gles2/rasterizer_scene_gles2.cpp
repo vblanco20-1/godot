@@ -1045,9 +1045,9 @@ void RasterizerSceneGLES2::_add_geometry_with_material(RasterizerStorageGLES2::G
 
 			//add omni / spots
 
-			for (int i = 0; i < e->instance->light_instances.size(); i++) {
+			for (int i = 0; i < e->instance->nlights/*e->instance->light_instances.size()*/; i++) {
 
-				LightInstance *li = light_instance_owner.getornull(e->instance->light_instances[i]);
+				LightInstance *li = light_instance_owner.getornull(e->instance->lights[i]/*e->instance->light_instances[i]*/);
 
 				if (li->light_index >= render_light_instance_count) {
 					continue; // too many

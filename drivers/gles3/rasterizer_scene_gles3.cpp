@@ -33,9 +33,9 @@
 #include "core/math/math_funcs.h"
 #include "core/os/os.h"
 #include "core/project_settings.h"
+#include "main/profiler.h"
 #include "rasterizer_canvas_gles3.h"
 #include "servers/visual/visual_server_raster.h"
-#include "main/profiler.h"
 
 #ifndef GLES_OVER_GL
 #define glClearDepth glClearDepthf
@@ -1851,7 +1851,7 @@ void RasterizerSceneGLES3::_render_geometry(RenderList::Element *e) {
 		default: {}
 	}
 }
-
+//#pragma optimize("off")
 void RasterizerSceneGLES3::_setup_light(RenderList::Element *e, const Transform &p_view_transform) {
 
 	int omni_indices[16];
@@ -1863,24 +1863,24 @@ void RasterizerSceneGLES3::_setup_light(RenderList::Element *e, const Transform 
 
 	int maxobj = MIN(16, state.max_forward_lights_per_object);
 
-	int lc = e->instance->light_instances.size();
+	int lc = e->instance->nlights; /* e->instance->light_instances.size();*/
 	if (lc) {
 
-		const RID *lights = e->instance->light_instances.ptr();
+		const RID *lights = e->instance->lights; /*e->instance->light_instances.ptr();*/
 
 		for (int i = 0; i < lc; i++) {
 			LightInstance *li = light_instance_owner.getptr(lights[i]);
-			if (li->last_pass != render_pass) //not visible
-				continue;
+			//if (li->last_pass != render_pass) //not visible
+			//	continue;
 
 			if (li->light_ptr->type == VS::LIGHT_OMNI) {
-				if (omni_count < maxobj && e->instance->layer_mask & li->light_ptr->cull_mask) {
+				if (omni_count < maxobj /* && e->instance->layer_mask & li->light_ptr->cull_mask*/) {
 					omni_indices[omni_count++] = li->light_index;
 				}
 			}
 
 			if (li->light_ptr->type == VS::LIGHT_SPOT) {
-				if (spot_count < maxobj && e->instance->layer_mask & li->light_ptr->cull_mask) {
+				if (spot_count < maxobj /* && e->instance->layer_mask & li->light_ptr->cull_mask*/) {
 					spot_indices[spot_count++] = li->light_index;
 				}
 			}
@@ -1970,7 +1970,7 @@ void RasterizerSceneGLES3::_setup_light(RenderList::Element *e, const Transform 
 		}
 	}
 }
-
+//#pragma optimize("on")
 void RasterizerSceneGLES3::_set_cull(bool p_front, bool p_disabled, bool p_reverse_cull) {
 
 	bool front = p_front;
@@ -4154,8 +4154,8 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 		render_list.clear();
 		_fill_render_list(p_cull_result, p_cull_count, true, false);
 		{
-		SCOPE_PROFILE(Render_Sort);
-		render_list.sort_by_key(false);
+			SCOPE_PROFILE(Render_Sort);
+			render_list.sort_by_key(false);
 		}
 		state.scene_shader.set_conditional(SceneShaderGLES3::RENDER_DEPTH, true);
 		_render_list(render_list.elements, render_list.element_count, p_cam_transform, p_cam_projection, 0, false, false, true, false, false);
@@ -4388,7 +4388,7 @@ void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const 
 	}
 	{
 		SCOPE_PROFILE(Render_Sort);
-	render_list.sort_by_key(false);
+		render_list.sort_by_key(false);
 	}
 	if (state.directional_light_count == 0) {
 		directional_light = NULL;
