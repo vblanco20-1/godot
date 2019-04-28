@@ -269,57 +269,20 @@ public:
 		//}
 	};
 
-	struct InstanceReflectionProbeData : public InstanceBaseData {
-
-		Instance *owner;
+	struct InstanceReflectionProbeData : public InstanceBaseData {		
 
 		struct PairInfo {
-			List<Instance *>::Element *L; //reflection iterator in geometry
+			List<Instance *>::Element *L; 
 			Instance *geometry;
 		};
-		List<PairInfo> geometries;
+		List<PairInfo> geometries;		
 
-		RID instance;
-		bool reflection_dirty;
-		SelfList<InstanceReflectionProbeData> update_list;
+		VisualServerScene::Instance *owner;
 
-		int render_step;
-
-		InstanceReflectionProbeData() :
-				update_list(this) {
-
-			reflection_dirty = true;
-			render_step = -1;
+		InstanceReflectionProbeData(){				
 		}
 	};
 
-	SelfList<InstanceReflectionProbeData>::List reflection_probe_render_list;
-
-	struct InstanceLightData : public InstanceBaseData {
-
-		struct PairInfo {
-			List<Instance *>::Element *L; //light iterator in geometry
-			Instance *geometry;
-		};
-
-		RID instance;
-		
-		//List<Instance *>::Element *D; // directional light in scenario
-
-		
-
-		List<PairInfo> geometries;
-
-		//Instance *baked_light;
-
-		InstanceLightData() {
-
-			//shadow_dirty = true;
-			//D = NULL;
-			//last_version = 0;
-			//baked_light = NULL;
-		}
-	};
 
 	struct InstanceGIProbeData : public InstanceBaseData {
 
