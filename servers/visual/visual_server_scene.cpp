@@ -123,7 +123,6 @@ struct LightmapCaptureComponent {
 	VisualServerScene::InstanceLightmapCaptureData *Data{ nullptr };
 };
 
-
 template <typename T>
 struct MarkUpdate {
 };
@@ -250,6 +249,61 @@ void set_dirty(RID id, bool p_update_aabb, bool p_update_materials) {
 	if (p_update_materials)
 		get_component<Dirty>(id.eid).update_materials = true;
 }
+
+moodycamel::ConcurrentQueue<VisualServerScene::Instance *> lightmap_update_queue;
+template <typename T, typename QTraits, typename F>
+void dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
+	constexpr size_t blocksize = QTraits::BLOCK_SIZE;
+	T dequeued[blocksize];
+	//SCOPE_PROFILE(InstancesCull);
+	while (true) {
+		size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
+		if (num <= 0)
+			break;
+		else {
+			for (int i = 0; i < num; i++) {
+				functor(dequeued[i]);
+			}
+		}
+	}
+}
+
+template <typename T, typename QTraits, typename F>
+void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
+	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+		SCOPE_PROFILE(parallel_dequeue);
+		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
+		T dequeued[blocksize];
+
+		while (true) {
+			size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
+			if (num <= 0)
+				break;
+			else {
+				for (int i = 0; i < num; i++) {
+					functor(dequeued[i]);
+				}
+			}
+		}
+	});
+}
+template <typename T, typename QTraits, typename F>
+void parallel_dequeue_concurrent_queue_unbatched(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
+	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+		SCOPE_PROFILE(parallel_dequeue);
+		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
+		T dequeued;
+
+		while (queue.try_dequeue(dequeued)) {
+			
+			functor(dequeued);
+			
+		}
+	});
+}
+
 
 RID VisualServerScene::camera_create() {
 	auto eid = VSG::ecs->registry.create();
@@ -731,7 +785,7 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 				//if (scenario && !gi_probe->update_element.in_list()) {
 				//	gi_probe_update_list.add(&gi_probe->update_element);
 				//}
-				add_component<MarkUpdate<GIProbeComponent>>(instance->self);
+				add_component<MarkUpdate<GIProbeComponent> >(instance->self);
 				add_component<GIProbeComponent>(instance->self);
 				GIProbeComponent &cmp = get_component<GIProbeComponent>(instance->self);
 				cmp.Data = gi_probe;
@@ -814,7 +868,7 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 			} break;
 			case VS::INSTANCE_GI_PROBE: {
 
-				clear_component<MarkUpdate<GIProbeComponent>>(instance->self);
+				clear_component<MarkUpdate<GIProbeComponent> >(instance->self);
 				//InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
 				//
 				//if (gi_probe->update_element.in_list()) {
@@ -1228,8 +1282,10 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		//}
 
 		if (!p_instance->lightmap_capture && geom->lightmap_captures.size()) {
+
 			//affected by lightmap captures, must update capture info!
-			_update_instance_lightmap_captures(p_instance);
+			lightmap_update_queue.enqueue(p_instance);
+			//_update_instance_lightmap_captures(p_instance);
 		} else {
 			if (!p_instance->lightmap_capture_data.empty()) {
 				p_instance->lightmap_capture_data.resize(0); //not in use, clear capture data
@@ -1543,7 +1599,7 @@ _FORCE_INLINE_ static Color _light_capture_voxel_cone_trace(const RasterizerStor
 }
 
 void VisualServerScene::_update_instance_lightmap_captures(Instance *p_instance) {
-
+	AUTO_PROFILE;
 	InstanceGeometryData *geom = get_instance_geometry(p_instance->self); //static_cast<InstanceGeometryData *>(p_instance->base_data);
 
 	static const Vector3 cone_traces[12] = {
@@ -2209,49 +2265,9 @@ struct EntityIDQueueTraits : public moodycamel::ConcurrentQueueDefaultTraits {
 
 moodycamel::ConcurrentQueue<EntityID, EntityIDQueueTraits> FrustrumInstances;
 
-//moodycamel::ConcurrentQueue<VisualServerScene::InstanceReflectionProbeData *> reflection_probe_instances;
 moodycamel::ConcurrentQueue<EntityID> reflection_probe_instances;
 moodycamel::ConcurrentQueue<EntityID> gi_probe_instances;
 moodycamel::ConcurrentQueue<VisualServerScene::Instance *, EntityIDQueueTraits> geometry_instances;
-
-template <typename T, typename QTraits, typename F>
-void dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
-	constexpr size_t blocksize = QTraits::BLOCK_SIZE;
-	T dequeued[blocksize];
-	//SCOPE_PROFILE(InstancesCull);
-	while (true) {
-		size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
-		if (num <= 0)
-			break;
-		else {
-			for (int i = 0; i < num; i++) {
-				functor(dequeued[i]);
-			}
-		}
-	}
-}
-
-template <typename T, typename QTraits, typename F>
-void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
-	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
-		SCOPE_PROFILE(parallel_dequeue);
-		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
-		T dequeued[blocksize];
-
-		while (true) {
-			size_t num = queue.try_dequeue_bulk(dequeued, blocksize);
-			if (num <= 0)
-				break;
-			else {
-				for (int i = 0; i < num; i++) {
-					functor(dequeued[i]);
-				}
-			}
-		}
-	});
-}
-
 void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_orthogonal, RID p_force_environment, uint32_t p_visible_layers, RID p_scenario, RID p_shadow_atlas, RID p_reflection_probe) {
 
 	AUTO_PROFILE;
@@ -3792,8 +3808,8 @@ void VisualServerScene::render_probes() {
 
 	auto ref_giprobes = VSG::ecs->registry.view<MarkUpdate<GIProbeComponent> >();
 	for (auto e : ref_giprobes) {
-			//SelfList<InstanceReflectionProbeData> *next = ref_probe->next();
-			RID base = get_component<InstanceComponent>(e).instance->base; //ref_probe->self()->owner->base;
+		//SelfList<InstanceReflectionProbeData> *next = ref_probe->next();
+		RID base = get_component<InstanceComponent>(e).instance->base; //ref_probe->self()->owner->base;
 
 		//SelfList<InstanceGIProbeData> *next = gi_probe->next();
 
@@ -3862,7 +3878,7 @@ void VisualServerScene::render_probes() {
 		//gi_probe = next;
 	}
 }
-
+std::mutex mat_mutex;
 void VisualServerScene::_update_instance_material(Instance *p_instance) {
 	if (p_instance->base_type == VS::INSTANCE_MESH) {
 		// remove materials no longer used and un-own them
@@ -3870,6 +3886,7 @@ void VisualServerScene::_update_instance_material(Instance *p_instance) {
 		int new_mat_count = VSG::storage->mesh_get_surface_count(p_instance->base);
 		for (int i = p_instance->materials.size() - 1; i >= new_mat_count; i--) {
 			if (p_instance->materials[i].is_valid()) {
+				std::lock_guard<std::mutex> lock(mat_mutex);
 				VSG::storage->material_remove_instance_owner(p_instance->materials[i], p_instance);
 			}
 		}
@@ -4024,7 +4041,11 @@ _FORCE_INLINE_ void VisualServerScene::_update_dirty_instance(Instance *p_instan
 	_update_instance(p_instance);
 	clear_component<Dirty>(p_instance->self);
 }
+template <typename Cont, typename F>
+void parallel_for(Cont &container, F &&functor) {
 
+	std::for_each(std::execution::par, container.begin(), container.end(), functor);
+}
 void VisualServerScene::update_dirty_instances() {
 
 	SCOPE_PROFILE(update_dirty_instances);
@@ -4039,32 +4060,27 @@ void VisualServerScene::update_dirty_instances() {
 	{
 		SCOPE_PROFILE(update_aabbs);
 
-		for (auto entity : view) {
+		//for (auto entity : view) {
+		parallel_for(view, [&](auto entity) {
 			Instance *p_instance = view.get<InstanceComponent>(entity).instance;
 			const Dirty &dt = view.get<Dirty>(entity);
 
 			if (dt.update_aabb) {
 				_update_instance_aabb(p_instance);
 			}
-
-			//if (dt.update_materials) {
-			//	_update_instance_material(p_instance);
-			//}
-			//
-			//_update_instance(p_instance);
-		}
-		//remove dirty for everything
+		});
 	}
 	{
 		SCOPE_PROFILE(update_materials);
-		for (auto entity : view) {
+		//for (auto entity : view) {
+		parallel_for(view, [&](auto entity) {
 			Instance *p_instance = view.get<InstanceComponent>(entity).instance;
 			const Dirty &dt = view.get<Dirty>(entity);
 
 			if (dt.update_materials) {
 				_update_instance_material(p_instance);
 			}
-		}
+		});
 	}
 
 	//{
@@ -4089,6 +4105,12 @@ void VisualServerScene::update_dirty_instances() {
 
 			//VSG::ecs->registry.remove<Dirty>(entity);
 		}
+	}
+	{
+		SCOPE_PROFILE(lightmap_captures);
+		parallel_dequeue_concurrent_queue_unbatched(lightmap_update_queue, [this](Instance *inst) {
+			_update_instance_lightmap_captures(inst);
+		});
 		VSG::ecs->registry.reset<Dirty>();
 	}
 }
