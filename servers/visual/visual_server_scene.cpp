@@ -112,11 +112,21 @@ struct ReflectionProbeComponent {
 	bool reflection_dirty{ true };
 	int render_step{ -1 };
 
-	VisualServerScene::InstanceReflectionProbeData *Data{nullptr};
+	VisualServerScene::InstanceReflectionProbeData *Data{ nullptr };
+};
+struct GIProbeComponent {
+	VisualServerScene::Instance *owner;
+	VisualServerScene::InstanceGIProbeData *Data{ nullptr };
+};
+struct LightmapCaptureComponent {
+	VisualServerScene::Instance *owner;
+	VisualServerScene::InstanceLightmapCaptureData *Data{ nullptr };
 };
 
+
 template <typename T>
-struct MarkUpdate {};
+struct MarkUpdate {
+};
 struct DirectionalLight {
 };
 struct Visible {
@@ -227,7 +237,6 @@ template <typename T>
 void clear_component(RID id) {
 	clear_component<T>(id.eid);
 }
-
 
 void set_dirty(RID id, bool p_update_aabb, bool p_update_materials) {
 
@@ -370,7 +379,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
+	if (has_component<ReflectionProbeComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -384,7 +393,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		get_component<GeometryComponent>(A->self).reflection_dirty = true;
 
 		return E; //this element should make freeing faster
-	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
+	} else if (has_component<LightmapCaptureComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -397,7 +406,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
 
 		return E; //this element should make freeing faster
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
+	} else if (has_component<GIProbeComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -412,7 +421,7 @@ void *VisualServerScene::_instance_pair(void *p_self, OctreeElementID, Instance 
 
 		return E; //this element should make freeing faster
 
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
+	} else if (has_component<GIProbeComponent>(B->self) && has_component<LightComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
 		return gi_probe->lights.insert(A);
@@ -431,7 +440,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		SWAP(A, B); //lesser always first
 	}
 
-	if (B->base_type == VS::INSTANCE_REFLECTION_PROBE && has_component<GeometryComponent>(A->self)) {
+	if (has_component<ReflectionProbeComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -442,7 +451,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		reflection_probe->geometries.erase(E);
 
 		get_component<GeometryComponent>(A->self).reflection_dirty = true;
-	} else if (B->base_type == VS::INSTANCE_LIGHTMAP_CAPTURE && has_component<GeometryComponent>(A->self)) {
+	} else if (has_component<LightmapCaptureComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -453,7 +462,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 		lightmap_capture->geometries.erase(E);
 		((VisualServerScene *)p_self)->_instance_queue_update(A, false, false); //need to update capture
 
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && has_component<GeometryComponent>(A->self)) {
+	} else if (has_component<GIProbeComponent>(B->self) && has_component<GeometryComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
 		InstanceGeometryData *geom = get_instance_geometry(A->self); //static_cast<InstanceGeometryData *>(A->base_data);
@@ -465,7 +474,7 @@ void VisualServerScene::_instance_unpair(void *p_self, OctreeElementID, Instance
 
 		get_component<GeometryComponent>(A->self).gi_probes_dirty = true;
 
-	} else if (B->base_type == VS::INSTANCE_GI_PROBE && A->base_type == VS::INSTANCE_LIGHT) {
+	} else if (has_component<GIProbeComponent>(B->self) && has_component<LightComponent>(A->self)) {
 
 		InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(B->base_data);
 		Set<Instance *>::Element *E = reinterpret_cast<Set<Instance *>::Element *>(udata);
@@ -609,6 +618,7 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 				InstanceLightmapCaptureData *lightmap_capture = static_cast<InstanceLightmapCaptureData *>(instance->base_data);
 				//erase dependencies, since no longer a lightmap
+				clear_component<LightmapCaptureComponent>(instance->self);
 				while (lightmap_capture->users.front()) {
 					instance_set_use_lightmap(lightmap_capture->users.front()->get()->self, RID(), RID());
 				}
@@ -617,9 +627,9 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 				InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
 
-				if (gi_probe->update_element.in_list()) {
-					gi_probe_update_list.remove(&gi_probe->update_element);
-				}
+				//if (gi_probe->update_element.in_list()) {
+				//	gi_probe_update_list.remove(&gi_probe->update_element);
+				//}
 				if (gi_probe->dynamic.probe_data.is_valid()) {
 					VSG::storage->free(gi_probe->dynamic.probe_data);
 				}
@@ -631,6 +641,8 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 					instance->lightmap_capture = NULL;
 					instance->lightmap = RID();
 				}
+				clear_component<MarkUpdate<GIProbeComponent> >(instance->self);
+				clear_component<GIProbeComponent>(instance->self);
 
 				VSG::scene_render->free(gi_probe->probe_instance);
 
@@ -704,6 +716,10 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 				InstanceLightmapCaptureData *lightmap_capture = memnew(InstanceLightmapCaptureData);
 				instance->base_data = lightmap_capture;
+				add_component<LightmapCaptureComponent>(instance->self);
+				LightmapCaptureComponent &cmp = get_component<LightmapCaptureComponent>(instance->self);
+				cmp.Data = lightmap_capture;
+				cmp.owner = instance;
 				//lightmap_capture->instance = VSG::scene_render->lightmap_capture_instance_create(p_base);
 			} break;
 			case VS::INSTANCE_GI_PROBE: {
@@ -712,9 +728,14 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 				instance->base_data = gi_probe;
 				gi_probe->owner = instance;
 
-				if (scenario && !gi_probe->update_element.in_list()) {
-					gi_probe_update_list.add(&gi_probe->update_element);
-				}
+				//if (scenario && !gi_probe->update_element.in_list()) {
+				//	gi_probe_update_list.add(&gi_probe->update_element);
+				//}
+				add_component<MarkUpdate<GIProbeComponent>>(instance->self);
+				add_component<GIProbeComponent>(instance->self);
+				GIProbeComponent &cmp = get_component<GIProbeComponent>(instance->self);
+				cmp.Data = gi_probe;
+				cmp.owner = instance;
 
 				gi_probe->probe_instance = VSG::scene_render->gi_probe_instance_create();
 
@@ -793,10 +814,12 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 			} break;
 			case VS::INSTANCE_GI_PROBE: {
 
-				InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
-				if (gi_probe->update_element.in_list()) {
-					gi_probe_update_list.remove(&gi_probe->update_element);
-				}
+				clear_component<MarkUpdate<GIProbeComponent>>(instance->self);
+				//InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
+				//
+				//if (gi_probe->update_element.in_list()) {
+				//	gi_probe_update_list.remove(&gi_probe->update_element);
+				//}
 			} break;
 			default: {}
 		}
@@ -825,11 +848,11 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 				//}
 			} break;
 			case VS::INSTANCE_GI_PROBE: {
-
-				InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
-				if (!gi_probe->update_element.in_list()) {
-					gi_probe_update_list.add(&gi_probe->update_element);
-				}
+				add_component<MarkUpdate<GIProbeComponent> >(instance->self);
+				//InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(instance->base_data);
+				//if (!gi_probe->update_element.in_list()) {
+				//	gi_probe_update_list.add(&gi_probe->update_element);
+				//}
 			} break;
 			default: {}
 		}
@@ -1206,7 +1229,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		if (!p_instance->lightmap_capture && geom->lightmap_captures.size()) {
 			//affected by lightmap captures, must update capture info!
-			//_update_instance_lightmap_captures(p_instance);
+			_update_instance_lightmap_captures(p_instance);
 		} else {
 			if (!p_instance->lightmap_capture_data.empty()) {
 				p_instance->lightmap_capture_data.resize(0); //not in use, clear capture data
@@ -2188,7 +2211,7 @@ moodycamel::ConcurrentQueue<EntityID, EntityIDQueueTraits> FrustrumInstances;
 
 //moodycamel::ConcurrentQueue<VisualServerScene::InstanceReflectionProbeData *> reflection_probe_instances;
 moodycamel::ConcurrentQueue<EntityID> reflection_probe_instances;
-moodycamel::ConcurrentQueue<VisualServerScene::InstanceGIProbeData *> gi_probe_instances;
+moodycamel::ConcurrentQueue<EntityID> gi_probe_instances;
 moodycamel::ConcurrentQueue<VisualServerScene::Instance *, EntityIDQueueTraits> geometry_instances;
 
 template <typename T, typename QTraits, typename F>
@@ -2506,7 +2529,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			if ((camera_layer_mask & ins->layer_mask) == 0) {
 
 				//failure
-			} else if (ins->base_type == VS::INSTANCE_REFLECTION_PROBE) {
+			} else if (has_component<ReflectionProbeComponent>(eid)) {
 				ReflectionProbeComponent &reflection_cmp = get_component<ReflectionProbeComponent>(ins->self);
 				InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(ins->base_data);
 
@@ -2521,13 +2544,18 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					}
 				}
 
-			} else if (ins->base_type == VS::INSTANCE_GI_PROBE) {
+			} else if (has_component<GIProbeComponent>(eid)) {
 
-				InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
-				if (!gi_probe->update_element.in_list()) {
-					gi_probe_instances.enqueue(gi_probe);
-					//gi_probe_update_list.add(&gi_probe->update_element);
+				//InstanceGIProbeData *gi_probe = static_cast<InstanceGIProbeData *>(ins->base_data);
+
+				if (!has_component<MarkUpdate<GIProbeComponent> >(ins->self)) {
+					gi_probe_instances.enqueue(ins->self.eid);
 				}
+
+				//if (!gi_probe->update_element.in_list()) {
+				//	gi_probe_instances.enqueue(gi_probe);
+				//	//gi_probe_update_list.add(&gi_probe->update_element);
+				//}
 
 			} else if (has_component<GeometryComponent>(eid) && ins->cast_shadows != VS::SHADOW_CASTING_SETTING_SHADOWS_ONLY) {
 				GeometryComponent &geocomp = get_component<GeometryComponent>(eid);
@@ -2611,8 +2639,9 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	{
 
 		SCOPE_PROFILE(dequeue_gi_probes);
-		dequeue_concurrent_queue(gi_probe_instances, [this](auto *gi_probe) {
-			gi_probe_update_list.add(&gi_probe->update_element);
+		dequeue_concurrent_queue(gi_probe_instances, [this](EntityID gi_probe) {
+			add_component<MarkUpdate<GIProbeComponent> >(gi_probe);
+			//gi_probe_update_list.add(&gi_probe->update_element);
 		});
 	}
 	{
@@ -2621,7 +2650,6 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		dequeue_concurrent_queue(reflection_probe_instances, [this](EntityID id) {
 			ReflectionProbeComponent &reflection_cmp = get_component<ReflectionProbeComponent>(id);
 			InstanceReflectionProbeData *reflection_probe = reflection_cmp.Data;
-
 
 			if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
 				if (reflection_cmp.reflection_dirty || VSG::scene_render->reflection_probe_instance_needs_redraw(reflection_cmp.instance)) {
@@ -2656,56 +2684,6 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	}
 }
 }
-//static bool bParallelShadowcast = true;
-//if (UpdateWork.size() > 2 && bParallelShadowcast)
-//{
-//
-//	//execute one to prime the queue
-//	{
-//		ShadowUpdateWork & work = UpdateWork[0];
-//
-//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection,
-//			work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-//
-//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-//
-//	}
-//
-//
-//
-//	//// Wait until sends data
-//	//std::unique_lock<std::mutex> lk(m);
-//	//cv.wait(lk, [] {return ready; });
-//
-//	//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
-//	while (ShadowWorkQueue.try_dequeue(QItem))
-//	{
-//
-//		 {
-//			SCOPE_PROFILE(ShadowRenderasync)
-//			if (QItem.bUpdateTransform) {
-//				SCOPE_PROFILE(ShadowTransform)
-//					VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
-//
-//			}
-//			if (QItem.bRender) {
-//				SCOPE_PROFILE(ShadowPass)
-//					VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
-//			}
-//		}
-//	}
-//}
-//else {
-//	std::for_each(UpdateWork.begin(), UpdateWork.end(), [&](ShadowUpdateWork & work) {
-//
-//		bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
-//
-//		get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-//	});
-//	}
-//
-//printf("numlights = %i , numwork = %i, queue = %i  \n", (int)light_cull_count, (int)UpdateWork.size(), (int)ShadowWorkQueue.size_approx());
-
 {
 	SCOPE_PROFILE(dequeue_shadows)
 
@@ -3729,12 +3707,11 @@ void VisualServerScene::render_probes() {
 
 	bool busy = false;
 
-	auto ref_probes = VSG::ecs->registry.view<MarkUpdate<ReflectionProbeComponent>>();
-	for (auto e : ref_probes)
-	{
+	auto ref_probes = VSG::ecs->registry.view<MarkUpdate<ReflectionProbeComponent> >();
+	for (auto e : ref_probes) {
 		//SelfList<InstanceReflectionProbeData> *next = ref_probe->next();
 		RID base = get_component<InstanceComponent>(e).instance->base; //ref_probe->self()->owner->base;
-			
+
 		ReflectionProbeComponent &reflection_cmp = get_component<ReflectionProbeComponent>(e);
 		switch (VSG::storage->reflection_probe_get_update_mode(base)) {
 
@@ -3809,13 +3786,18 @@ void VisualServerScene::render_probes() {
 
 	/* GI PROBES */
 
-	SelfList<InstanceGIProbeData> *gi_probe = gi_probe_update_list.first();
+	//SelfList<InstanceGIProbeData> *gi_probe = gi_probe_update_list.first();
 
-	while (gi_probe) {
+	//while (gi_probe) {
 
-		SelfList<InstanceGIProbeData> *next = gi_probe->next();
+	auto ref_giprobes = VSG::ecs->registry.view<MarkUpdate<GIProbeComponent> >();
+	for (auto e : ref_giprobes) {
+			//SelfList<InstanceReflectionProbeData> *next = ref_probe->next();
+			RID base = get_component<InstanceComponent>(e).instance->base; //ref_probe->self()->owner->base;
 
-		InstanceGIProbeData *probe = gi_probe->self();
+		//SelfList<InstanceGIProbeData> *next = gi_probe->next();
+
+		InstanceGIProbeData *probe = get_component<GIProbeComponent>(e).Data; //gi_probe->self();
 		Instance *instance_probe = probe->owner;
 
 		//check if probe must be setup, but don't do if on the lighting thread
@@ -3877,7 +3859,7 @@ void VisualServerScene::render_probes() {
 		}
 		//_update_gi_probe(gi_probe->self()->owner);
 
-		gi_probe = next;
+		//gi_probe = next;
 	}
 }
 

@@ -241,32 +241,12 @@ public:
 	//SelfList<Instance>::List _instance_update_list;
 	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials = false);
 
-	struct InstanceGeometryData : public InstanceBaseData {
-
-		//List<Instance *> lighting;
-		//List<Instance *> lighting;
-		//bool lighting_dirty;
-		//bool can_cast_shadows;
-		//bool material_is_animated;
-
-		List<Instance *> reflection_probes;
-		//bool reflection_dirty;
+	struct InstanceGeometryData : public InstanceBaseData {		
+		List<Instance *> reflection_probes;		
 
 		List<Instance *> gi_probes;
-		//bool gi_probes_dirty;
 
 		List<Instance *> lightmap_captures;
-
-		
-
-		//InstanceGeometryData() {
-		//
-		//	//lighting_dirty = false;
-		//	//reflection_dirty = true;
-		//	//can_cast_shadows = true;
-		//	//material_is_animated = true;
-		//	//gi_probes_dirty = true;
-		//}
 	};
 
 	struct InstanceReflectionProbeData : public InstanceBaseData {		
@@ -380,17 +360,17 @@ public:
 		bool invalid;
 		uint32_t base_version;
 
-		SelfList<InstanceGIProbeData> update_element;
+		//SelfList<InstanceGIProbeData> update_element;
 
-		InstanceGIProbeData() :
-				update_element(this) {
+		InstanceGIProbeData(){// :
+				//update_element(this) {{
 			invalid = true;
 			base_version = 0;
 			dynamic.updating_stage = GI_UPDATE_STAGE_CHECK;
 		}
 	};
 
-	SelfList<InstanceGIProbeData>::List gi_probe_update_list;
+	//SelfList<InstanceGIProbeData>::List gi_probe_update_list;
 
 	struct InstanceLightmapCaptureData : public InstanceBaseData {
 
