@@ -172,6 +172,7 @@ public:
 		RID self;
 		//scenario stuff
 		OctreeElementID octree_id;
+		uint32_t octree_index;
 		Scenario *scenario;
 		//SelfList<Instance> scenario_item;
 

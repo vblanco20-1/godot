@@ -100,7 +100,7 @@ public:
 		//Vector<RID> light_instances;
 		Vector<RID> reflection_probe_instances;
 		Vector<RID> gi_probe_instances;
-		RID lights[8];
+		RID lights[16];
 		char nlights;
 
 		Vector<float> blend_values;
