@@ -43,7 +43,7 @@
 #include <vector>
 #include "thirdparty/entt/entt.hpp"
 
-
+class NewOctree{};
 class VisualServerScene {
 public:
 	enum {
@@ -127,6 +127,8 @@ public:
 
 		Octree<Instance, true> octree;
 
+		NewOctree *geometry_octree;
+
 		//List<Instance *> directional_lights;
 		RID environment;
 		RID fallback_environment;
@@ -140,7 +142,10 @@ public:
 		void insert_instance(RID instance);
 		void remove_instance(RID instance);
 
-		Scenario() { debug = VS::SCENARIO_DEBUG_DISABLED; }
+		Scenario() {
+			debug = VS::SCENARIO_DEBUG_DISABLED;
+			//mesh_octree = nullptr;
+		}
 	};
 
 	mutable RID_Owner<Scenario> scenario_owner;
