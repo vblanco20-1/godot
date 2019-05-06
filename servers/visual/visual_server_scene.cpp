@@ -52,10 +52,9 @@ public:
 		std::array<Element, Num_Elements> Elements;
 		std::array<AABB, Num_Elements> ElementBounds;
 		std::array<uint32_t, Num_Elements> ElementsIDs;
-		uint8_t count;		
+		uint8_t count;
 	};
 
-	
 	struct Node {
 		//only there in leaves
 		ElementArray *Storage;
@@ -120,8 +119,8 @@ public:
 					//	break;
 					//}
 				}
-				
-				Owner->AddElementToArray_id(Storage->ElementsIDs[i],Children[best], elem, bounds);
+
+				Owner->AddElementToArray_id(Storage->ElementsIDs[i], Children[best], elem, bounds);
 			}
 			for (int n = 0; n < 8; n++) {
 
@@ -161,7 +160,7 @@ public:
 					//Storage->Add(element, bounds);
 					ChildBounds.merge_with(bounds);
 					return id;
-					
+
 				}
 				//no space, split it
 				else {
@@ -188,16 +187,14 @@ public:
 						id = Children[n]->AddElement(element, bounds, Owner);
 						ChildBounds.merge_with(Children[n]->ChildBounds);
 						return id;
-						
 					}
 				}
 				//fallback
 				id = Children[0]->AddElement(element, bounds, Owner);
 				ChildBounds.merge_with(Children[0]->ChildBounds);
 				return id;
-				
 			}
-		
+
 			return id;
 		};
 
@@ -231,6 +228,8 @@ public:
 	};
 
 	FastOctree(Vector3 InitialBounds) {
+		auto e0 = OctreeRegistry.create();
+		OctreeRegistry.destroy(e0);
 		RootNode = CreateNode();
 		RootNode->BaseBounds.set_size(InitialBounds);
 	}
@@ -241,16 +240,16 @@ public:
 
 	Node *CreateNode() {
 
-		auto it = NodePool.insert(Node{});
+		auto it = new Node(); //NodePool.insert(Node{});
 		it->Storage = new ElementArray();
 		it->Parent = nullptr;
 		uint32_t nodeID = OctreeRegistry.create();
 		it->id = nodeID;
-		OctreeRegistry.assign<NodeRef>(nodeID, &(*it));
+		OctreeRegistry.assign<NodeRef>(nodeID, it);
 		for (int i = 0; i < 8; i++) {
 			it->Children[i] = nullptr;
 		}
-		return &(*it);
+		return it;
 	}
 	template <typename F>
 	void cull_convex(const Vector<Plane> &p_convex, F &&functor) {
@@ -260,12 +259,11 @@ public:
 		Node *owner;
 		uint16_t idx;
 	};
-	uint32_t AddElementToArray(Node* node,const Element &newe, const AABB &newbounds) {
+	uint32_t AddElementToArray(Node *node, const Element &newe, const AABB &newbounds) {
 		ElementArray *ElemList = node->Storage;
 		ElemList->Elements[ElemList->count] = newe;
 		ElemList->ElementBounds[ElemList->count] = newbounds;
 		uint32_t id = OctreeRegistry.create();
-
 
 		ElemList->ElementsIDs[ElemList->count] = id;
 
@@ -274,7 +272,7 @@ public:
 		ElemList->count++;
 		return id;
 	}
-	void AddElementToArray_id(uint32_t id,Node *node, const Element &newe, const AABB &newbounds) {
+	void AddElementToArray_id(uint32_t id, Node *node, const Element &newe, const AABB &newbounds) {
 		ElementArray *ElemList = node->Storage;
 		ElemList->Elements[ElemList->count] = newe;
 		ElemList->ElementBounds[ElemList->count] = newbounds;
@@ -285,7 +283,6 @@ public:
 		OctreeRegistry.assign_or_replace<ElementReference>(id, node, ElemList->count);
 
 		ElemList->count++;
-		
 	}
 	void RemoveElementFromArray(Node *node, const Element &_remove) {
 		ElementArray *ElemList = node->Storage;
@@ -305,50 +302,48 @@ public:
 	void RemoveElementFromNode(Node *node, uint16_t idx) {
 		ElementArray *ElemList = node->Storage;
 		int i = idx;
-			
+
 		ElemList->Elements[i] = ElemList->Elements[ElemList->count - 1];
 		ElemList->ElementBounds[i] = ElemList->ElementBounds[ElemList->count - 1];
 		ElemList->ElementsIDs[i] = ElemList->ElementsIDs[ElemList->count - 1];
-		
+
 		OctreeRegistry.assign_or_replace<ElementReference>(ElemList->ElementsIDs[i], node, (uint16_t)i);
 
 		ElemList->count--;
-			
-		
 	}
 
 	void RemoveOctreeElement(uint32_t id) {
 		if (OctreeRegistry.valid(id)) {
 
-		ElementReference &ref = OctreeRegistry.get<ElementReference>(id);
-		RemoveElementFromNode(ref.owner,ref.idx);
+			ElementReference &ref = OctreeRegistry.get<ElementReference>(id);
+			RemoveElementFromNode(ref.owner, ref.idx);
 
-		OctreeRegistry.destroy(id);
+			OctreeRegistry.destroy(id);
 		}
 	}
 
 	void MoveElement(uint32_t id, AABB newAABB) {
 		AUTO_PROFILE;
 		if (OctreeRegistry.valid(id)) {
-		ElementReference &ref = OctreeRegistry.get<ElementReference>(id);
-		Element original = ref.owner->Storage->Elements[ref.idx];
+			ElementReference &ref = OctreeRegistry.get<ElementReference>(id);
+			Element original = ref.owner->Storage->Elements[ref.idx];
 
-		RemoveElementFromNode(ref.owner, ref.idx);
-		uint32_t newid = AddElement(original, newAABB);
+			RemoveElementFromNode(ref.owner, ref.idx);
+			uint32_t newid = AddElement(original, newAABB);
 
-		ElementReference &newref = OctreeRegistry.get<ElementReference>(newid);
+			ElementReference &newref = OctreeRegistry.get<ElementReference>(newid);
 
-		OctreeRegistry.assign_or_replace<ElementReference>(id,newref);
+			OctreeRegistry.assign_or_replace<ElementReference>(id, newref);
 
-		newref.owner->Storage->ElementsIDs[newref.idx] = id;
+			newref.owner->Storage->ElementsIDs[newref.idx] = id;
 
-		OctreeRegistry.destroy(newid);
+			OctreeRegistry.destroy(newid);
 		}
 	}
 
 private:
 	Node *RootNode;
-	plf::colony<Node> NodePool;
+	//plf::colony<Node> NodePool;
 	entt::registry OctreeRegistry;
 };
 
@@ -584,7 +579,7 @@ void dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F 
 template <typename T, typename QTraits, typename F>
 void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
 	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+	std::for_each(/*std::execution::par,*/ &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
 		SCOPE_PROFILE(parallel_dequeue);
 		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
 		T dequeued[blocksize];
@@ -604,7 +599,7 @@ void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &
 template <typename T, typename QTraits, typename F>
 void parallel_dequeue_concurrent_queue_unbatched(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
 	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	std::for_each(std::execution::par, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+	std::for_each(/*std::execution::par,*/ &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
 		SCOPE_PROFILE(parallel_dequeue);
 		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
 		T dequeued;
@@ -618,7 +613,6 @@ void parallel_dequeue_concurrent_queue_unbatched(moodycamel::ConcurrentQueue<T, 
 FastOctree<EntityID> *get_geoctree(VisualServerScene::Scenario *sc) {
 	return static_cast<FastOctree<EntityID> *>(sc->geometry_octree);
 }
-
 
 RID VisualServerScene::camera_create() {
 	auto eid = VSG::ecs->registry.create();
@@ -861,10 +855,6 @@ void scenario_cull_convex_instance(VisualServerScene::Scenario *sc, const Vector
 	});
 }
 
-
-
-
-
 template <typename F>
 
 void scenario_cull_convex_geo(VisualServerScene::Scenario *sc, const Vector<Plane> &p_convex, F &&functor) {
@@ -977,7 +967,7 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 
 		if (scenario && instance->octree_id) {
 			scenario->octree.erase(instance->octree_id); //make dependencies generated by the octree go away
-			
+
 			instance->octree_id = 0;
 
 			get_geoctree(scenario)->RemoveOctreeElement(instance->octree_index);
@@ -1192,7 +1182,6 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 		}
 		get_geoctree(instance->scenario)->RemoveOctreeElement(instance->octree_index);
 		instance->octree_index = 0;
-
 
 		switch (instance->base_type) {
 
@@ -1717,7 +1706,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		// not inside octree
 		p_instance->octree_id = p_instance->scenario->octree.create(p_instance, new_aabb, 0, pairable, base_type, pairable_mask);
-		p_instance->octree_index = get_geoctree(p_instance->scenario)->AddElement(p_instance->self.eid,new_aabb);
+		p_instance->octree_index = get_geoctree(p_instance->scenario)->AddElement(p_instance->self.eid, new_aabb);
 
 	} else {
 
@@ -2724,10 +2713,30 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	static std::vector<RID> view_lights;
 	static std::vector<AABB> view_lights_bounds;
-
 	view_lights.clear();
 	view_lights_bounds.clear();
-	auto light_view = reg.group<>(entt::get<InstanceBoundsComponent, LightComponent, Visible, InstanceComponent>);
+
+	scenario->entity_list.view<InstanceComponent>().each([&](auto e, InstanceComponent &ins) {
+		if (has_component<LightComponent>(ins.self_ID)) {
+			InstanceBoundsComponent &bound_comp = get_component<InstanceBoundsComponent>(ins.self_ID);
+			LightComponent &light_comp = get_component<LightComponent>(ins.self_ID);
+
+			view_lights.push_back(light_comp.light_instance);
+
+			_update_instance_aabb(ins.instance);
+
+			//AABB lightbounds = bound_comp.
+			//if (bounds.extra_margin)
+			//	new_aabb.grow_by(bounds.extra_margin);
+			//
+			//bounds.aabb = new_aabb;
+
+
+			view_lights_bounds.push_back(bound_comp.transformed_aabb);
+		}
+	});
+
+	auto light_view = reg.group<>(entt::get<InstanceBoundsComponent, LightComponent, Visible, InstanceComponent>, entt::exclude<DirectionalLight>);
 	for (auto entity : light_view) {
 
 		InstanceBoundsComponent &bound_comp = light_view.get<InstanceBoundsComponent>(entity);
@@ -2737,12 +2746,12 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		RID light_instance = light_comp.light_instance;
 		Instance *ins = inst_comp.instance;
 
-		view_lights.push_back(light_instance);
-		view_lights_bounds.push_back(bound_comp.transformed_aabb);
+		//view_lights.push_back(light_instance);
+		//view_lights_bounds.push_back(bound_comp.transformed_aabb);
 
 		bool is_in_frustrum = bound_comp.transformed_aabb.intersects_convex_shape(&planes[0], 6);
 
-		if (light_cull_count < MAX_LIGHTS_CULLED && is_in_frustrum) {
+		if (light_cull_count < MAX_LIGHTS_CULLED){// && is_in_frustrum) {
 
 			//if (!light->geometries.empty()) {
 			//do not add this light if no geometry is affected by it..
@@ -2757,6 +2766,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		}
 	}
 
+	//printf("numlight %i", light_cull_count);
+
 	RID *directional_light_ptr = &light_instance_cull_result[light_cull_count];
 	directional_light_count = 0;
 
@@ -2764,11 +2775,10 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	UpdateWork.reserve(10);
 	// directional lights
 	{
-		//#TODO this should be a ecs query
 
 		int directional_shadow_count = 0;
 		//reg.group<>(entt::get<InstanceBoundsComponent, LightComponent, Visible, InstanceComponent>);
-		auto directional_lights = VSG::ecs->registry.group<>(entt::get<DirectionalLight, LightComponent, InstanceComponent, Visible>);
+		auto directional_lights = reg.group<>(entt::get<DirectionalLight, LightComponent, InstanceComponent, Visible>);
 		Instance **lights_with_shadow = (Instance **)alloca(sizeof(Instance *) * directional_lights.size());
 		for (EntityID lightID : directional_lights) {
 			//for (List<Instance *>::Element *E = scenario->directional_lights.front(); E; E = E->next()) {
@@ -2913,19 +2923,21 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	/* STEP 5 - PROCESS LIGHTS */
 
-	auto handle = std::async(std::launch::async,
-			[&]() {
-				SCOPE_PROFILE(ShadowAsyncWork);
+	//auto handle = std::async(std::launch::async,
+	//		[&]() {
+	{
+		SCOPE_PROFILE(ShadowAsyncWork);
 
-				for (int i = 0; i < UpdateWork.size(); i++) {
-					ShadowUpdateWork &work = UpdateWork[i];
-					bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+		for (int i = 0; i < UpdateWork.size(); i++) {
+			ShadowUpdateWork &work = UpdateWork[i];
+			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
 
-					get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-				}
+			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+		}
 
-				return 0;
-			});
+		//return 0;
+	}
+	//		});
 	instance_cull_count = 0;
 	{
 		{ SCOPE_PROFILE(MainFrustrumCull);
@@ -3009,15 +3021,43 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					}
 				}
 
-				if (geocomp.lighting_dirty) {
+				if (true) { //geocomp.lighting_dirty) {
+					SCOPE_PROFILE(RefreshLight)
 					int l = 0;
 
-					for (int i = 0; i < view_lights_bounds.size() && l < 16; i++) {
+					struct LightInfo {
+						Vector3 pos;
+						RID light;
+					};
+					std::array<LightInfo, 36> candidate_lights;
 
-						if (bounds.transformed_aabb.intersects(view_lights_bounds[i])) {
-							ins->lights[l++] = view_lights[i];
+					for (int i = 0; i < view_lights_bounds.size(); i++) {
+
+						//if (bounds.transformed_aabb.intersects(view_lights_bounds[i])) {
+						{
+							candidate_lights[l].pos = view_lights_bounds[i].position;
+							candidate_lights[l].light = view_lights[i];
+							l++;
+							//ins->lights[l++] =
 						}
 					}
+
+					Vector3 targetpos = bounds.transformed_aabb.position;
+					if (l > 16) {
+						std::sort(&candidate_lights[0], &candidate_lights[16], [&targetpos](const LightInfo &A, const LightInfo &B) {
+
+							const float distA = targetpos.distance_squared_to(A.pos);
+							const float distB = targetpos.distance_squared_to(B.pos);
+							return distA < distB;
+							});
+
+						l = 16;
+					}
+
+					for (int i = 0; i < 16 && i < l; i++) {
+						ins->lights[i] = candidate_lights[i].light;
+					}					
+
 					ins->nlights = l;
 
 					geocomp.lighting_dirty = false;
@@ -4405,7 +4445,7 @@ _FORCE_INLINE_ void VisualServerScene::_update_dirty_instance(Instance *p_instan
 template <typename Cont, typename F>
 void parallel_for(Cont &container, F &&functor) {
 
-	std::for_each(std::execution::par, container.begin(), container.end(), functor);
+	std::for_each(/*std::execution::par, */ container.begin(), container.end(), functor);
 }
 void VisualServerScene::update_dirty_instances() {
 
