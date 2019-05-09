@@ -5258,11 +5258,11 @@ Color RasterizerStorageGLES3::light_get_color(RID p_light) {
 }
 
 bool RasterizerStorageGLES3::light_has_shadow(RID p_light) const {
-	return false;
-	//const Light *light = light_owner.getornull(p_light);
-	//ERR_FAIL_COND_V(!light, VS::LIGHT_DIRECTIONAL);
-	//
-	//return light->shadow;
+	
+	const Light *light = light_owner.getornull(p_light);
+	ERR_FAIL_COND_V(!light, VS::LIGHT_DIRECTIONAL);
+
+	return light->shadow;
 }
 
 uint64_t RasterizerStorageGLES3::light_get_version(RID p_light) const {

@@ -41,6 +41,13 @@
 #include <future>
 #include <vector>
 
+#define PARALLEL_RENDER
+
+#ifdef PARALLEL_RENDER
+#define STL_PARALLEL std::execution::par
+#else
+#define STL_PARALLEL std::execution::seq
+#endif
 /* CAMERA API */
 constexpr int Num_Elements = 64;
 template <typename Element>
@@ -367,30 +374,36 @@ struct Dirty {
 	}
 };
 struct GeometryComponent {
-	VisualServerScene::InstanceGeometryData *Data;
+	VisualServerScene::InstanceGeometryData *Data{ nullptr };
+	std::vector<uint32_t> AffectingLights;
+	uint8_t lighting_dirty : 1;
+	uint8_t can_cast_shadows : 1;
+	uint8_t material_is_animated : 1;
+	uint8_t reflection_dirty : 1;
+	uint8_t gi_probes_dirty : 1;
 
-	bool lighting_dirty : 1;
-	bool can_cast_shadows : 1;
-	bool material_is_animated : 1;
-	bool reflection_dirty : 1;
-	bool gi_probes_dirty : 1;
+	GeometryComponent() :
+			Data(nullptr),
+			lighting_dirty(false),
+			reflection_dirty(true),
+			can_cast_shadows(true),
+			material_is_animated(true),
+			gi_probes_dirty(true) {}
 
-	GeometryComponent() {
-		Data = nullptr;
-		lighting_dirty = false;
-		reflection_dirty = true;
-		can_cast_shadows = true;
-		material_is_animated = true;
-		gi_probes_dirty = true;
-	}
-	GeometryComponent(VisualServerScene::InstanceGeometryData *_Data) {
-		Data = _Data;
-		lighting_dirty = false;
-		reflection_dirty = true;
-		can_cast_shadows = true;
-		material_is_animated = true;
-		gi_probes_dirty = true;
-	}
+	void add_light(uint32_t light, bool check_existence = false) {
+		if (check_existence) {
+		}
+		AffectingLights.push_back(light);
+	};
+	void remove_light(uint32_t light) {
+		for (int i = 0; i < AffectingLights.size(); i++) {
+			if (AffectingLights[i] == light) {
+				AffectingLights[i] = AffectingLights.back();
+				AffectingLights.pop_back();
+				return;
+			}
+		}
+	};
 };
 
 struct LightComponent {
@@ -489,7 +502,7 @@ struct ShadowWorkItem {
 	}
 };
 
-static moodycamel::ConcurrentQueue<ShadowWorkItem> ShadowWorkQueue;
+moodycamel::ConcurrentQueue<ShadowWorkItem> ShadowWorkQueue;
 
 VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
 
@@ -579,7 +592,7 @@ void dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F 
 template <typename T, typename QTraits, typename F>
 void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
 	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	std::for_each(/*std::execution::par,*/ &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+	std::for_each(STL_PARALLEL, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
 		SCOPE_PROFILE(parallel_dequeue);
 		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
 		T dequeued[blocksize];
@@ -599,7 +612,7 @@ void parallel_dequeue_concurrent_queue(moodycamel::ConcurrentQueue<T, QTraits> &
 template <typename T, typename QTraits, typename F>
 void parallel_dequeue_concurrent_queue_unbatched(moodycamel::ConcurrentQueue<T, QTraits> &queue, F &&functor) {
 	constexpr size_t taskloop[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-	std::for_each(/*std::execution::par,*/ &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
+	std::for_each(STL_PARALLEL, &taskloop[0], &taskloop[7], [&queue, &functor](auto i) {
 		SCOPE_PROFILE(parallel_dequeue);
 		constexpr size_t blocksize = QTraits::BLOCK_SIZE;
 		T dequeued;
@@ -610,8 +623,16 @@ void parallel_dequeue_concurrent_queue_unbatched(moodycamel::ConcurrentQueue<T, 
 		}
 	});
 }
+template <typename Cont, typename F>
+void parallel_for(Cont &container, F &&functor) {
+
+	std::for_each(STL_PARALLEL, container.begin(), container.end(), functor);
+}
 FastOctree<EntityID> *get_geoctree(VisualServerScene::Scenario *sc) {
 	return static_cast<FastOctree<EntityID> *>(sc->geometry_octree);
+}
+FastOctree<EntityID> *get_otheroctree(VisualServerScene::Scenario *sc) {
+	return static_cast<FastOctree<EntityID> *>(sc->other_octree);
 }
 
 RID VisualServerScene::camera_create() {
@@ -853,8 +874,17 @@ void scenario_cull_convex_instance(VisualServerScene::Scenario *sc, const Vector
 		auto &ic = get_component<InstanceComponent>(eid);
 		functor(ic.instance);
 	});
+	static_cast<FastOctree<EntityID> *>(sc->other_octree)->cull_convex(p_convex, [&](auto eid) {
+		auto &ic = get_component<InstanceComponent>(eid);
+		functor(ic.instance);
+	});
 }
-
+template <typename F>
+void scenario_cull_convex_entities(VisualServerScene::Scenario *sc, const Vector<Plane> &p_convex, F &&functor) {
+	AUTO_PROFILE
+	static_cast<FastOctree<EntityID> *>(sc->geometry_octree)->cull_convex(p_convex, functor);
+	static_cast<FastOctree<EntityID> *>(sc->other_octree)->cull_convex(p_convex, functor);
+}
 template <typename F>
 
 void scenario_cull_convex_geo(VisualServerScene::Scenario *sc, const Vector<Plane> &p_convex, F &&functor) {
@@ -873,6 +903,7 @@ RID VisualServerScene::scenario_create() {
 	scenario->octree.set_unpair_callback(_instance_unpair, this);
 
 	scenario->geometry_octree = new FastOctree<EntityID>(Vector3(8000.0f, 8000.0f, 8000.0f));
+	scenario->other_octree = new FastOctree<EntityID>(Vector3(8000.0f, 8000.0f, 8000.0f));
 
 	scenario->reflection_probe_shadow_atlas = VSG::scene_render->shadow_atlas_create();
 	VSG::scene_render->shadow_atlas_set_size(scenario->reflection_probe_shadow_atlas, 1024); //make enough shadows for close distance, don't bother with rest
@@ -969,8 +1000,11 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 			scenario->octree.erase(instance->octree_id); //make dependencies generated by the octree go away
 
 			instance->octree_id = 0;
-
-			get_geoctree(scenario)->RemoveOctreeElement(instance->octree_index);
+			if (has_component<GeometryComponent>(instance->self)) {
+				get_geoctree(scenario)->RemoveOctreeElement(instance->octree_index);
+			} else {
+				get_otheroctree(scenario)->RemoveOctreeElement(instance->octree_index);
+			}
 			instance->octree_index = 0;
 		}
 
@@ -1082,8 +1116,9 @@ void VisualServerScene::instance_set_base(RID p_instance, RID p_base) {
 			case VS::INSTANCE_PARTICLES: {
 
 				InstanceGeometryData *geom = memnew(InstanceGeometryData);
-				VSG::ecs->registry.assign_or_replace<GeometryComponent>(instance->self.eid, geom);
-				instance->base_data = geom;
+				add_component<GeometryComponent>(instance->self.eid);
+				get_component<GeometryComponent>(instance->self.eid).Data = geom;
+
 			} break;
 			case VS::INSTANCE_REFLECTION_PROBE: {
 
@@ -1180,7 +1215,12 @@ void VisualServerScene::instance_set_scenario(RID p_instance, RID p_scenario) {
 			instance->scenario->octree.erase(instance->octree_id); //make dependencies generated by the octree go away
 			instance->octree_id = 0;
 		}
-		get_geoctree(instance->scenario)->RemoveOctreeElement(instance->octree_index);
+		if (has_component<GeometryComponent>(instance->self)) {
+			get_geoctree(instance->scenario)->RemoveOctreeElement(instance->octree_index);
+		} else {
+			get_otheroctree(instance->scenario)->RemoveOctreeElement(instance->octree_index);
+		}
+		//get_geoctree(instance->scenario)->RemoveOctreeElement(instance->octree_index);
 		instance->octree_index = 0;
 
 		switch (instance->base_type) {
@@ -1630,9 +1670,18 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 	//trigger dirty flags
 	if (has_component<GeometryComponent>(p_instance->self) && !sameAABB) {
-		get_component<GeometryComponent>(p_instance->self).lighting_dirty = true;
-		get_component<GeometryComponent>(p_instance->self).reflection_dirty = true;
-		get_component<GeometryComponent>(p_instance->self).gi_probes_dirty = true;
+		auto &GeoComp = get_component<GeometryComponent>(p_instance->self);
+		GeoComp.lighting_dirty = true;
+		GeoComp.reflection_dirty = true;
+		GeoComp.gi_probes_dirty = true;
+
+		for (auto e : GeoComp.AffectingLights) {
+			if (has_component<LightComponent>(e)) {
+
+				get_component<LightComponent>(e).shadow_dirty = true;
+			}
+		}
+		GeoComp.AffectingLights.clear();
 	}
 
 	if (!p_instance->scenario) {
@@ -1685,7 +1734,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 	ScenarioLink &sl = get_component<ScenarioLink>(p_instance->self);
 
 	rg.assign_or_replace<CullAABB>(sl.scenario_id, CullAABB{ new_aabb });
-
+	auto oct = has_component<GeometryComponent>(p_instance->self) ? get_geoctree(p_instance->scenario) : get_otheroctree(p_instance->scenario);
 	if (p_instance->octree_id == 0) {
 
 		uint32_t base_type = 1 << p_instance->base_type;
@@ -1706,7 +1755,8 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 
 		// not inside octree
 		p_instance->octree_id = p_instance->scenario->octree.create(p_instance, new_aabb, 0, pairable, base_type, pairable_mask);
-		p_instance->octree_index = get_geoctree(p_instance->scenario)->AddElement(p_instance->self.eid, new_aabb);
+		
+		p_instance->octree_index = oct->AddElement(p_instance->self.eid, new_aabb);
 
 	} else {
 
@@ -1714,7 +1764,7 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 			return;
 
 		p_instance->scenario->octree.move(p_instance->octree_id, new_aabb);
-		get_geoctree(p_instance->scenario)->MoveElement(p_instance->octree_index, new_aabb);
+		oct->MoveElement(p_instance->octree_index, new_aabb);
 	}
 }
 
@@ -2067,19 +2117,19 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				//std::vector<Instance*> CullResult;
 				//CullResult.reserve(1000);
 				//p_scenario->octree.cull_convex_lambda(planes, [&](Instance *instance) {
-				scenario_cull_convex_instance(p_scenario, planes, [&](Instance *instance) {
-					const bool bIsVisible = has_component<Visible>(instance->self);
-					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
-					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+				scenario_cull_convex_geo(p_scenario, planes, [&](EntityID id) {
+					const bool bIsVisible = true; //has_component<Visible>(instance->self);
+					const bool bIsMesh = true; //has_component<GeometryComponent>(instance->self);
+					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(id).can_cast_shadows;
 
 					if (bIsVisible && bIsMesh && bIsShadowcaster) {
 
-						if (get_component<GeometryComponent>(instance->self).material_is_animated) {
+						if (get_component<GeometryComponent>(id).material_is_animated) {
 							animated_material_found = true;
 						}
 
 						float max, min;
-						get_component<InstanceBoundsComponent>(instance->self).transformed_aabb.project_range_in_plane(base, min, max);
+						get_component<InstanceBoundsComponent>(id).transformed_aabb.project_range_in_plane(base, min, max);
 
 						z_max = MAX(z_max, max);
 
@@ -2090,8 +2140,8 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						//CullResult.push_back(instance);
 						cull_count++;
 					}
-				},
-						VS::INSTANCE_GEOMETRY_MASK);
+				});
+				//		VS::INSTANCE_GEOMETRY_MASK);
 
 				if (found_items) {
 					min_distance = MAX(min_distance, z_min);
@@ -2264,17 +2314,21 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 				//int cull_count = p_scenario->octree.cull_convex(light_frustum_planes, instance_shadow_cull_result, MAX_INSTANCE_CULL, VS::INSTANCE_GEOMETRY_MASK);
 				Plane near_plane(light_transform.origin, -light_transform.basis.get_axis(2));
 				//p_scenario->octree.cull_convex_lambda(light_frustum_planes, [&](Instance *instance) {
-				scenario_cull_convex_instance(p_scenario, light_frustum_planes, [&](Instance *instance) {
-					const bool bIsVisible = has_component<Visible>(instance->self);
-					const bool bIsMesh = has_component<GeometryComponent>(instance->self);
-					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+				scenario_cull_convex_geo(p_scenario, light_frustum_planes, [&](EntityID id) {
+					//scenario_cull_convex_instance(p_scenario, light_frustum_planes, [&](Instance *instance) {
+					InstanceComponent &instcmp = get_component<InstanceComponent>(id);
+					Instance *instance = instcmp.instance;
+					const bool bIsVisible = true; //has_component<Visible>(id);
+					const bool bIsMesh = true; //
+					has_component<GeometryComponent>(id);
+					const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(id).can_cast_shadows;
 
 					if (bIsVisible && bIsMesh && bIsShadowcaster) {
 
 						float min, max;
 						//Instance *instance = instance_shadow_cull_result[j];
 
-						get_component<InstanceBoundsComponent>(instance->self).transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
+						get_component<InstanceBoundsComponent>(id).transformed_aabb.project_range_in_plane(Plane(z_vec, 0), min, max);
 						instance->depth = near_plane.distance_to(instance->transform.origin);
 						instance->depth_layer = 0;
 						if (max > z_max)
@@ -2283,8 +2337,8 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						//instance_shadow_cull_result[cull_count] = instance;
 						cull_count++;
 					}
-				},
-						VS::INSTANCE_GEOMETRY_MASK);
+				}); //,
+				//		VS::INSTANCE_GEOMETRY_MASK);
 				// a pre pass will need to be needed to determine the actual z-near to be used
 
 				ShadowWorkItem WorkItem;
@@ -2336,14 +2390,18 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						std::vector<RasterizerScene::InstanceBase *> CullResult;
 						CullResult.reserve(1000);
 						//p_scenario->octree.cull_convex_lambda(planes, [&](Instance *instance) {
-						scenario_cull_convex_instance(p_scenario, planes, [&](Instance *instance) {
-							const bool bIsVisible = has_component<Visible>(instance->self);
-							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
-							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+						//scenario_cull_convex_instance(p_scenario, planes, [&](Instance *instance) {
+						scenario_cull_convex_geo(p_scenario, planes, [&](EntityID id) {
+							InstanceComponent &instcmp = get_component<InstanceComponent>(id);
+							Instance *instance = instcmp.instance;
+							const bool bIsVisible = true; //has_component<Visible>(instance->self);
+							const bool bIsMesh = true;
+							//has_component<GeometryComponent>(instance->self);
+							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(id).can_cast_shadows;
 
 							if (bIsVisible && bIsMesh && bIsShadowcaster) {
 
-								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
+								if (get_component<GeometryComponent>(id).material_is_animated) {
 									animated_material_found = true;
 								}
 								//p_instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -2354,8 +2412,9 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 								//instance_shadow_cull_result[cull_count] = instance;
 								//cull_count++;
 							}
-						},
-								VS::INSTANCE_GEOMETRY_MASK);
+						});
+						//,
+						//		VS::INSTANCE_GEOMETRY_MASK);
 
 						ShadowWorkItem WorkItem;
 						WorkItem.light_instance_set_shadow_transform(light_rid, CameraMatrix(), light_transform, radius, 0, i);
@@ -2401,13 +2460,15 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 						std::vector<RasterizerScene::InstanceBase *> CullResult;
 						CullResult.reserve(1000);
 						//p_scenario->octree.cull_convex_lambda(planes, [&](Instance *instance) {
-						scenario_cull_convex_instance(p_scenario, planes, [&](Instance *instance) {
-							const bool bIsVisible = has_component<Visible>(instance->self);
-							const bool bIsMesh = has_component<GeometryComponent>(instance->self);
-							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+						scenario_cull_convex_geo(p_scenario, planes, [&](EntityID id) {
+							InstanceComponent &instcmp = get_component<InstanceComponent>(id);
+							Instance *instance = instcmp.instance;
+							const bool bIsVisible = true; //has_component<Visible>(instance->self);
+							const bool bIsMesh = true;
+							const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(id).can_cast_shadows;
 
 							if (bIsVisible && bIsMesh && bIsShadowcaster) {
-								if (get_component<GeometryComponent>(instance->self).material_is_animated) {
+								if (get_component<GeometryComponent>(id).material_is_animated) {
 									animated_material_found = true;
 								}
 								//instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -2416,8 +2477,8 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 								//instance_shadow_cull_result[cull_count] = instance;
 								//cull_count++;
 							}
-						},
-								VS::INSTANCE_GEOMETRY_MASK);
+						});
+						//,VS::INSTANCE_GEOMETRY_MASK);
 
 						//VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, xform, radius, 0, i);
 						//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, i, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
@@ -2456,13 +2517,15 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 			std::vector<RasterizerScene::InstanceBase *> CullResult;
 			CullResult.reserve(1000);
 			//p_scenario->octree.cull_convex_lambda(planes, [&](Instance *instance) {
-			scenario_cull_convex_instance(p_scenario, planes, [&](Instance *instance) {
-				const bool bIsVisible = has_component<Visible>(instance->self);
-				const bool bIsMesh = has_component<GeometryComponent>(instance->self);
-				const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(instance->self).can_cast_shadows;
+			scenario_cull_convex_geo(p_scenario, planes, [&](EntityID id) {
+				InstanceComponent &instcmp = get_component<InstanceComponent>(id);
+				Instance *instance = instcmp.instance;
+				const bool bIsVisible = true; //has_component<Visible>(instance->self);
+				const bool bIsMesh = true;
+				const bool bIsShadowcaster = bIsMesh && get_component<GeometryComponent>(id).can_cast_shadows;
 
 				if (bIsVisible && bIsMesh && bIsShadowcaster) {
-					if (get_component<GeometryComponent>(instance->self).material_is_animated) {
+					if (get_component<GeometryComponent>(id).material_is_animated) {
 						animated_material_found = true;
 					}
 					instance->depth = near_plane.distance_to(instance->transform.origin);
@@ -2473,8 +2536,8 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 					CullResult.push_back(instance);
 					cull_count++;
 				}
-			},
-					VS::INSTANCE_GEOMETRY_MASK);
+			}); //,
+			//		VS::INSTANCE_GEOMETRY_MASK);
 
 			//VSG::scene_render->light_instance_set_shadow_transform(light->instance, cm, light_transform, radius, 0, 0);
 			//VSG::scene_render->render_shadow(light->instance, p_shadow_atlas, 0, (RasterizerScene::InstanceBase **)instance_shadow_cull_result, cull_count);
@@ -2712,17 +2775,18 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	auto &reg = VSG::ecs->registry;
 
 	static std::vector<RID> view_lights;
+	static std::vector<RID> view_lights_ids;
 	static std::vector<AABB> view_lights_bounds;
 	view_lights.clear();
 	view_lights_bounds.clear();
-
+	view_lights_ids.clear();
 	scenario->entity_list.view<InstanceComponent>().each([&](auto e, InstanceComponent &ins) {
 		if (has_component<LightComponent>(ins.self_ID)) {
 			InstanceBoundsComponent &bound_comp = get_component<InstanceBoundsComponent>(ins.self_ID);
 			LightComponent &light_comp = get_component<LightComponent>(ins.self_ID);
 
 			view_lights.push_back(light_comp.light_instance);
-
+			view_lights_ids.push_back(ins.self_ID);
 			_update_instance_aabb(ins.instance);
 
 			//AABB lightbounds = bound_comp.
@@ -2730,7 +2794,6 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			//	new_aabb.grow_by(bounds.extra_margin);
 			//
 			//bounds.aabb = new_aabb;
-
 
 			view_lights_bounds.push_back(bound_comp.transformed_aabb);
 		}
@@ -2751,7 +2814,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 		bool is_in_frustrum = bound_comp.transformed_aabb.intersects_convex_shape(&planes[0], 6);
 
-		if (light_cull_count < MAX_LIGHTS_CULLED){// && is_in_frustrum) {
+		if (light_cull_count < MAX_LIGHTS_CULLED && is_in_frustrum) {
 
 			//if (!light->geometries.empty()) {
 			//do not add this light if no geometry is affected by it..
@@ -2817,7 +2880,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	}
 
 	ShadowWorkItem QItem;
-
+	int64_t shadowcasters = 0;
 	{ //setup shadow maps
 
 		for (int i = 0; i < light_cull_count; i++) {
@@ -2910,6 +2973,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			bool redraw = VSG::scene_render->shadow_atlas_update_light(p_shadow_atlas, light_instance, coverage, light_comp.last_version);
 
 			if (redraw) {
+				shadowcasters++;
 				//must redraw!
 				ShadowUpdateWork work;
 				work.light_instance_update_shadow(ins, p_cam_transform, p_cam_projection, p_cam_orthogonal, p_shadow_atlas, scenario);
@@ -2923,34 +2987,23 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 	/* STEP 5 - PROCESS LIGHTS */
 
-	//auto handle = std::async(std::launch::async,
-	//		[&]() {
-	{
-		SCOPE_PROFILE(ShadowAsyncWork);
+	auto handle = std::async(std::launch::async,
+			[&]() {
+				{
+					SCOPE_PROFILE(ShadowAsyncWork);
 
-		for (int i = 0; i < UpdateWork.size(); i++) {
-			ShadowUpdateWork &work = UpdateWork[i];
-			bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
+					parallel_for(UpdateWork, [this](auto work) {
+						bool bShadowDirty = _light_instance_update_shadow(work._p_instance, work._p_cam_transform, work._p_cam_projection, work._p_cam_orthogonal, work._p_shadow_atlas, work._p_scenario);
 
-			get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
-		}
-
-		//return 0;
-	}
-	//		});
+						get_component<LightComponent>(work.light).shadow_dirty = bShadowDirty;
+					});
+				}
+			});
 	instance_cull_count = 0;
 	{
 		{ SCOPE_PROFILE(MainFrustrumCull);
 
-	//for loop
-	//auto &group = scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
-	//std::for_each(std::execution::par, group.begin(), group.end(),
-	//		[this, &planes, &group](auto e) {
-	//			if (group.get<CullAABB>(e).aabb.intersects_convex_shape(&planes[0], 6)) {
-	//				FrustrumInstances.enqueue(group.get<InstanceComponent>(e).self_ID.eid);
-	//			}
-	//		});
-	scenario_cull_convex_geo(scenario, planes, [](auto eid) {
+	scenario_cull_convex_entities(scenario, planes, [](auto eid) {
 		FrustrumInstances.enqueue(eid);
 	});
 }
@@ -3021,7 +3074,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					}
 				}
 
-				if (true) { //geocomp.lighting_dirty) {
+				if (geocomp.lighting_dirty) {
 					SCOPE_PROFILE(RefreshLight)
 					int l = 0;
 
@@ -3030,13 +3083,15 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 						RID light;
 					};
 					std::array<LightInfo, 36> candidate_lights;
+					geocomp.AffectingLights.clear();
 
 					for (int i = 0; i < view_lights_bounds.size(); i++) {
 
-						//if (bounds.transformed_aabb.intersects(view_lights_bounds[i])) {
-						{
+						if (bounds.transformed_aabb.intersects(view_lights_bounds[i])) {
+
 							candidate_lights[l].pos = view_lights_bounds[i].position;
 							candidate_lights[l].light = view_lights[i];
+							geocomp.AffectingLights.push_back(view_lights_ids[i].eid);
 							l++;
 							//ins->lights[l++] =
 						}
@@ -3045,18 +3100,17 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 					Vector3 targetpos = bounds.transformed_aabb.position;
 					if (l > 16) {
 						std::sort(&candidate_lights[0], &candidate_lights[16], [&targetpos](const LightInfo &A, const LightInfo &B) {
-
 							const float distA = targetpos.distance_squared_to(A.pos);
 							const float distB = targetpos.distance_squared_to(B.pos);
 							return distA < distB;
-							});
+						});
 
 						l = 16;
 					}
 
 					for (int i = 0; i < 16 && i < l; i++) {
 						ins->lights[i] = candidate_lights[i].light;
-					}					
+					}
 
 					ins->nlights = l;
 
@@ -3121,10 +3175,6 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 			if (reflection_probe_cull_count < MAX_REFLECTION_PROBES_CULLED) {
 				if (reflection_cmp.reflection_dirty || VSG::scene_render->reflection_probe_instance_needs_redraw(reflection_cmp.instance)) {
 					add_component<MarkUpdate<ReflectionProbeComponent> >(id);
-					//if (!reflection_probe->update_list.in_list()) {
-					//	reflection_cmp.render_step = 0;
-					//	reflection_probe_render_list.add_last(&reflection_probe->update_list);
-					//}
 
 					reflection_cmp.reflection_dirty = false;
 				}
@@ -3162,9 +3212,26 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 		}
 		if (QItem.bRender) {
 			SCOPE_PROFILE(ShadowPass)
+			//shadowcasters++;
 			VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
 		}
 	}
+	handle.get();
+	//its possible that there is still work left
+	while (ShadowWorkQueue.try_dequeue(QItem)) {
+		SCOPE_PROFILE(ShadowRender_2)
+		if (QItem.bUpdateTransform) {
+			SCOPE_PROFILE(ShadowTransform)
+			VSG::scene_render->light_instance_set_shadow_transform(QItem.tf_p_light_instance, QItem.tf_p_projection, QItem.tf_p_transform, QItem.tf_p_far, QItem.tf_p_split, QItem.tf_p_pass, QItem.tf_p_bias_scale);
+		}
+		if (QItem.bRender) {
+			SCOPE_PROFILE(ShadowPass)
+
+			VSG::scene_render->render_shadow(QItem.r_p_light, QItem.r_p_shadow_atlas, QItem.r_p_pass, &QItem.r_cullresult[0], QItem.r_cullresult.size());
+		}
+	}
+
+	TracyPlot("Shadow Casters", (int64_t)shadowcasters);
 }
 
 UpdateWork.clear();
@@ -4442,11 +4509,7 @@ _FORCE_INLINE_ void VisualServerScene::_update_dirty_instance(Instance *p_instan
 	_update_instance(p_instance);
 	clear_component<Dirty>(p_instance->self);
 }
-template <typename Cont, typename F>
-void parallel_for(Cont &container, F &&functor) {
 
-	std::for_each(/*std::execution::par, */ container.begin(), container.end(), functor);
-}
 void VisualServerScene::update_dirty_instances() {
 
 	SCOPE_PROFILE(update_dirty_instances);

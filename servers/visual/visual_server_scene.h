@@ -128,6 +128,7 @@ public:
 		Octree<Instance, true> octree;
 
 		NewOctree *geometry_octree;
+		NewOctree *other_octree;
 
 		//List<Instance *> directional_lights;
 		RID environment;
@@ -247,7 +248,8 @@ public:
 	//SelfList<Instance>::List _instance_update_list;
 	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_materials = false);
 
-	struct InstanceGeometryData : public InstanceBaseData {		
+	struct InstanceGeometryData : public InstanceBaseData {
+	
 		List<Instance *> reflection_probes;		
 
 		List<Instance *> gi_probes;

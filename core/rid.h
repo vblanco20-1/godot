@@ -61,11 +61,11 @@ public:
 class RID {
 	friend class RID_OwnerBase;
 
-	mutable RID_Data *_data;
+	mutable RID_Data *_data = nullptr;
 	
 
 public:
-	uint32_t eid;
+	uint32_t eid = 0;
 	_FORCE_INLINE_ RID_Data *get_data() const { return _data; }
 
 	_FORCE_INLINE_ bool operator==(const RID &p_rid) const {
@@ -92,9 +92,9 @@ public:
 
 	_FORCE_INLINE_ uint32_t get_id() const { return _data ? _data->get_id() : 0; }
 
-	_FORCE_INLINE_ RID() {
-		_data = NULL;
-	}
+	//_FORCE_INLINE_ RID() {
+	//	_data = NULL;
+	//}
 };
 
 class RID_OwnerBase {
