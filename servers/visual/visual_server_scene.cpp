@@ -228,6 +228,29 @@ public:
 				}
 			}
 		};
+		template <typename F>
+		void cull_aabb(const AABB &bound, F &&functor) {
+
+			if (ChildBounds.intersects(bound)) {
+
+				if (Storage) {
+					for (int i = 0; i < Storage->count; i++) {
+						const AABB &bnd = Storage->ElementBounds[i];
+						if (bnd.intersects(bound)) {
+
+							//auto &ic = get_component<InstanceComponent>(Storage->Elements[i]);
+							functor(Storage->Elements[i]);
+						}
+					}
+
+				} else {
+
+					for (auto n = 0; n < 8; n++) {
+						Children[n]->cull_aabb(bound, functor);
+					}
+				}
+			}
+		};
 	};
 
 	struct NodeRef {
@@ -261,6 +284,10 @@ public:
 	template <typename F>
 	void cull_convex(const Vector<Plane> &p_convex, F &&functor) {
 		RootNode->cull_convex(p_convex, functor);
+	}
+	template <typename F>
+	void cull_aabb(const AABB& bound, F &&functor) {
+		RootNode->cull_aabb(bound, functor);
 	}
 	struct ElementReference {
 		Node *owner;
@@ -886,10 +913,15 @@ void scenario_cull_convex_entities(VisualServerScene::Scenario *sc, const Vector
 	static_cast<FastOctree<EntityID> *>(sc->other_octree)->cull_convex(p_convex, functor);
 }
 template <typename F>
-
 void scenario_cull_convex_geo(VisualServerScene::Scenario *sc, const Vector<Plane> &p_convex, F &&functor) {
 	AUTO_PROFILE
 	static_cast<FastOctree<EntityID> *>(sc->geometry_octree)->cull_convex(p_convex, functor);
+}
+
+template <typename F>
+void scenario_cull_box_geo(VisualServerScene::Scenario *sc, const AABB& box, F &&functor) {
+	AUTO_PROFILE
+	static_cast<FastOctree<EntityID> *>(sc->geometry_octree)->cull_aabb(box, functor);
 }
 
 RID VisualServerScene::scenario_create() {
@@ -1695,23 +1727,23 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 		//make sure to dirty all the meshes that change
 		SCOPE_PROFILE(LightSetDirty)
 		if (has_component<LightComponent>(p_instance->self) && !sameAABB) {
-			auto &group = p_instance->scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
-			std::for_each(group.begin(), group.end(),
-					[this, &old_aabb, &new_aabb, &group](auto e) {
-						//if (group.get<InstanceComponent>(e)) {
 
-						auto eid = group.get<InstanceComponent>(e).self_ID.eid;
-
-						if (has_component<GeometryComponent>(eid)) {
-							const bool intersectsOld = group.get<CullAABB>(e).aabb.intersects(old_aabb);
-							const bool intersectsNew = group.get<CullAABB>(e).aabb.intersects(new_aabb);
+			//auto &group = p_instance->scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
+			//std::for_each(group.begin(), group.end(),
+			AABB all_box = old_aabb;
+			all_box.merge_with(new_aabb);
+			scenario_cull_box_geo(p_instance->scenario, all_box,
+					[this, &old_aabb, &new_aabb](auto eid) {
+						//if (has_component<GeometryComponent>(eid)) {
+							auto &bounds = get_component<InstanceBoundsComponent>(eid);
+							const bool intersectsOld = bounds.transformed_aabb.intersects(old_aabb);
+							const bool intersectsNew = bounds.transformed_aabb.intersects(new_aabb);
 
 							if ((intersectsOld && !intersectsNew) || (!intersectsOld && intersectsNew)) {
 
-								get_component<GeometryComponent>(group.get<InstanceComponent>(e).self_ID).lighting_dirty = true;
+								get_component<GeometryComponent>(eid).lighting_dirty = true;
 							}
-						}
-						//}
+						//}						
 					});
 		} /*else if (has_component<ReflectionProbeComponent>(p_instance->self) && !sameAABB) {
 				 auto &group = p_instance->scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
