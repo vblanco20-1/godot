@@ -1701,19 +1701,24 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 	bounds.transformed_aabb = new_aabb;
 
 	//trigger dirty flags
-	if (has_component<GeometryComponent>(p_instance->self) && !sameAABB) {
+	if (has_component<GeometryComponent>(p_instance->self)) {
+
+		
 		auto &GeoComp = get_component<GeometryComponent>(p_instance->self);
-		GeoComp.lighting_dirty = true;
-		GeoComp.reflection_dirty = true;
-		GeoComp.gi_probes_dirty = true;
+		if (!sameAABB || p_instance->skeleton.is_valid()) {
+			GeoComp.lighting_dirty = true;
+			GeoComp.reflection_dirty = true;
+			GeoComp.gi_probes_dirty = true;
 
-		for (auto e : GeoComp.AffectingLights) {
-			if (has_component<LightComponent>(e)) {
+			for (auto e : GeoComp.AffectingLights) {
+				if (has_component<LightComponent>(e)) {
 
-				get_component<LightComponent>(e).shadow_dirty = true;
+					get_component<LightComponent>(e).shadow_dirty = true;
+				}
 			}
+			GeoComp.AffectingLights.clear();
 		}
-		GeoComp.AffectingLights.clear();
+		
 	}
 
 	if (!p_instance->scenario) {
@@ -1733,17 +1738,15 @@ void VisualServerScene::_update_instance(Instance *p_instance) {
 			AABB all_box = old_aabb;
 			all_box.merge_with(new_aabb);
 			scenario_cull_box_geo(p_instance->scenario, all_box,
-					[this, &old_aabb, &new_aabb](auto eid) {
-						//if (has_component<GeometryComponent>(eid)) {
-							auto &bounds = get_component<InstanceBoundsComponent>(eid);
-							const bool intersectsOld = bounds.transformed_aabb.intersects(old_aabb);
-							const bool intersectsNew = bounds.transformed_aabb.intersects(new_aabb);
+					[this, &old_aabb, &new_aabb](auto eid) {						
+						auto &bounds = get_component<InstanceBoundsComponent>(eid);
+						const bool intersectsOld = bounds.transformed_aabb.intersects(old_aabb);
+						const bool intersectsNew = bounds.transformed_aabb.intersects(new_aabb);
 
-							if ((intersectsOld && !intersectsNew) || (!intersectsOld && intersectsNew)) {
+						if ((intersectsOld && !intersectsNew) || (!intersectsOld && intersectsNew)) {
 
-								get_component<GeometryComponent>(eid).lighting_dirty = true;
-							}
-						//}						
+							get_component<GeometryComponent>(eid).lighting_dirty = true;
+						}											
 					});
 		} /*else if (has_component<ReflectionProbeComponent>(p_instance->self) && !sameAABB) {
 				 auto &group = p_instance->scenario->entity_list.group<CullAABB, InstanceComponent, Visible>();
@@ -2819,7 +2822,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 
 			view_lights.push_back(light_comp.light_instance);
 			view_lights_ids.push_back(ins.self_ID);
-			_update_instance_aabb(ins.instance);
+			//_update_instance_aabb(ins.instance);
 
 			//AABB lightbounds = bound_comp.
 			//if (bounds.extra_margin)
@@ -3150,6 +3153,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 
 				if (geocomp.reflection_dirty) {
+					SCOPE_PROFILE(RefreshReflection)
 					int l = 0;
 					//only called when reflection probe AABB enter/exit this geometry
 					ins->reflection_probe_instances.resize(geom->reflection_probes.size());
@@ -3166,6 +3170,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 				}
 
 				if (geocomp.gi_probes_dirty) {
+					SCOPE_PROFILE(RefreshGIProbes)
 					int l = 0;
 					//only called when reflection probe AABB enter/exit this geometry
 					ins->gi_probe_instances.resize(geom->gi_probes.size());
@@ -3264,6 +3269,7 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 	}
 
 	TracyPlot("Shadow Casters", (int64_t)shadowcasters);
+	TracyPlot("Render Instances", (int64_t)instance_cull_count);
 }
 
 UpdateWork.clear();

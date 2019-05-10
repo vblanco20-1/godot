@@ -3805,11 +3805,12 @@ AABB RasterizerStorageGLES3::mesh_get_aabb(RID p_mesh, RID p_skeleton) const {
 	Skeleton *sk = NULL;
 	if (p_skeleton.is_valid()) {
 		sk = skeleton_owner.get(p_skeleton);
+		//return AABB(Vector3(0, 0, 0), Vector3(5, 5, 5));
 	}
 
 	AABB aabb;
-
-	if (sk && sk->size != 0) {
+	//HACK, skels tend to be broken
+	if (false){//sk && sk->size != 0) {
 
 		for (int i = 0; i < mesh->surfaces.size(); i++) {
 
