@@ -381,7 +381,7 @@ void RasterizerGLES3::output_lens_distorted_to_screen(RID p_render_target, const
 }
 
 void RasterizerGLES3::end_frame(bool p_swap_buffers) {
-
+	AUTO_PROFILE;
 	if (OS::get_singleton()->is_layered_allowed()) {
 		if (OS::get_singleton()->get_window_per_pixel_transparency_enabled()) {
 #if (defined WINDOWS_ENABLED) && !(defined UWP_ENABLED)
@@ -402,13 +402,19 @@ void RasterizerGLES3::end_frame(bool p_swap_buffers) {
 			glColorMask(true, true, true, true);
 		}
 	}
-
-	SCOPE_PROFILE(GL_Sync)
-	if (p_swap_buffers)
+	{
+		ZoneScopedNC("GL_Sync", 0x870014);
+	if (p_swap_buffers) {
+		//SCOPE_PROFILE(Swap_Buffers)
 		OS::get_singleton()->swap_buffers();
-	else
+	}
+
+	else {
+		//SCOPE_PROFILE(GL_Finish)
 		glFinish();
+	}
 	PROFILER_ENDFRAME("rasterizer");
+}
 }
 
 void RasterizerGLES3::finalize() {

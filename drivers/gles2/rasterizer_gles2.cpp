@@ -441,7 +441,7 @@ void RasterizerGLES2::output_lens_distorted_to_screen(RID p_render_target, const
 }
 
 void RasterizerGLES2::end_frame(bool p_swap_buffers) {
-
+	
 	if (OS::get_singleton()->is_layered_allowed()) {
 		if (OS::get_singleton()->get_window_per_pixel_transparency_enabled()) {
 #if (defined WINDOWS_ENABLED) && !(defined UWP_ENABLED)
@@ -463,7 +463,6 @@ void RasterizerGLES2::end_frame(bool p_swap_buffers) {
 		}
 	}
 
-	
 	if (p_swap_buffers)
 		OS::get_singleton()->swap_buffers();
 	else

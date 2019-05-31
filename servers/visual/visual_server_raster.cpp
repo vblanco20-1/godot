@@ -63,7 +63,7 @@ void VisualServerRaster::black_bars_set_images(RID p_left, RID p_top, RID p_righ
 }
 
 void VisualServerRaster::_draw_margins() {
-
+	AUTO_PROFILE;
 	VSG::canvas_render->draw_window_margins(black_margin, black_image);
 };
 

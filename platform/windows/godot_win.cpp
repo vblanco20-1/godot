@@ -178,13 +178,15 @@ int _main() {
 int main(int _argc, char **_argv) {
 	// _argc and _argv are ignored
 	// we are going to use the WideChar version of them instead
-
+	
+	std::cout <<"dfdsMain: Initialize CORE" << std::endl;
+	//sleep(1000);
 #ifdef CRASH_HANDLER_EXCEPTION
-	__try {
+	//__try {
 		return _main();
-	} __except (CrashHandlerException(GetExceptionInformation())) {
-		return 1;
-	}
+	//} __except (CrashHandlerException(GetExceptionInformation())) {
+	//	return 1;
+	//}
 #else
 	return _main();
 #endif
@@ -193,6 +195,7 @@ int main(int _argc, char **_argv) {
 HINSTANCE godot_hinstance = NULL;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+	std::cout << "dfd232sMain: Initialize CORE" << std::endl;
 	godot_hinstance = hInstance;
 	return main(0, NULL);
 }

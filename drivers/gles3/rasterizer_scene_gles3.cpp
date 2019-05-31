@@ -1994,8 +1994,8 @@ void RasterizerSceneGLES3::_set_cull(bool p_front, bool p_disabled, bool p_rever
 }
 
 void RasterizerSceneGLES3::_render_list(RenderList::Element **p_elements, int p_element_count, const Transform &p_view_transform, const CameraMatrix &p_projection, GLuint p_base_env, bool p_reverse_cull, bool p_alpha_pass, bool p_shadow, bool p_directional_add, bool p_directional_shadows) {
-	SCOPE_PROFILE(Render_List);
-
+	
+	ZoneScopedNC("Render_List", 0x7b9e00);
 	glBindBufferBase(GL_UNIFORM_BUFFER, 0, state.scene_ubo); //bind globals ubo
 
 	bool use_radiance_map = false;
@@ -3155,7 +3155,8 @@ void RasterizerSceneGLES3::_copy_texture_to_front_buffer(GLuint p_texture) {
 }
 
 void RasterizerSceneGLES3::_fill_render_list(InstanceBase **p_cull_result, int p_cull_count, bool p_depth_pass, bool p_shadow_pass) {
-	SCOPE_PROFILE(Fill_Render_List);
+	//SCOPE_PROFILE(Fill_Render_List);
+	ZoneScopedNC("Fill_Render_List", 0x7b9e00);
 	current_geometry_index = 0;
 	current_material_index = 0;
 	state.used_sss = false;
@@ -4079,11 +4080,18 @@ void RasterizerSceneGLES3::_post_process(Environment *env, const CameraMatrix &p
 	state.tonemap_shader.set_conditional(TonemapShaderGLES3::V_FLIP, false);
 }
 
-void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection, bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count, RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count, RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
-	AUTO_PROFILE;
+void RasterizerSceneGLES3::render_scene(const Transform &p_cam_transform, const CameraMatrix &p_cam_projection,
+	bool p_cam_ortogonal, InstanceBase **p_cull_result, int p_cull_count,
+	RID *p_light_cull_result, int p_light_cull_count, RID *p_reflection_probe_cull_result, int p_reflection_probe_cull_count,
+	RID p_environment, RID p_shadow_atlas, RID p_reflection_atlas, RID p_reflection_probe, int p_reflection_probe_pass) {
+	//AUTO_PROFILE;
+	ZoneScopedNC("RasterizerSceneGLES::RenderScene", 0x7b9e00);
 	//first of all, make a new render pass
 	render_pass++;
 
+	TracyPlot("Cull Count", (int64_t)p_cull_count);
+	TracyPlot("Light Cull Count", (int64_t)p_light_cull_count);
+	TracyPlot("Reflection Probe Count", (int64_t)p_reflection_probe_cull_count);
 	//fill up ubo
 
 	storage->info.render.object_count += p_cull_count;
@@ -4713,7 +4721,7 @@ void RasterizerSceneGLES3::render_shadow(RID p_light, RID p_shadow_atlas, int p_
 	render_list.clear();
 	_fill_render_list(p_cull_result, p_cull_count, true, true);
 
-	//render_list.sort_by_depth(false); //shadow is front to back for performance
+	render_list.sort_by_depth(false); //shadow is front to back for performance
 
 	glDisable(GL_BLEND);
 	glDisable(GL_DITHER);
@@ -5025,7 +5033,7 @@ void RasterizerSceneGLES3::initialize() {
 		glBufferData(GL_UNIFORM_BUFFER, sizeof(LightDataUBO), NULL, GL_DYNAMIC_DRAW);
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-		state.max_forward_lights_per_object = 16; //8;
+		state.max_forward_lights_per_object = 8; //8;
 
 		state.scene_shader.add_custom_define("#define MAX_LIGHT_DATA_STRUCTS " + itos(state.max_ubo_lights) + "\n");
 		state.scene_shader.add_custom_define("#define MAX_FORWARD_LIGHTS " + itos(state.max_forward_lights_per_object) + "\n");

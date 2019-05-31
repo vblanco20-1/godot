@@ -1079,7 +1079,7 @@ int OS_Windows::get_current_video_driver() const {
 }
 
 Error OS_Windows::initialize(const VideoMode &p_desired, int p_video_driver, int p_audio_driver) {
-
+	printf("test: Initialize CORE");
 	main_loop = NULL;
 	outside = true;
 	window_has_focus = true;

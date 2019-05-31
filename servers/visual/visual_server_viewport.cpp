@@ -243,6 +243,7 @@ void VisualServerViewport::_draw_viewport(Viewport *p_viewport, ARVRInterface::E
 }
 
 void VisualServerViewport::draw_viewports() {
+	AUTO_PROFILE;
 	// get our arvr interface in case we need it
 	Ref<ARVRInterface> arvr_interface = ARVRServer::get_singleton()->get_primary_interface();
 
