@@ -697,6 +697,9 @@ public:
 			RasterizerStorageGLES3::Material *material;
 			RasterizerStorageGLES3::GeometryOwner *owner;
 			uint64_t sort_key;
+			VS::InstanceType get_base_type() const{
+				return VS::InstanceType((sort_key >> SORT_KEY_GEOMETRY_TYPE_SHIFT) & 0x7);
+			}			
 		};
 
 		Element *base_elements;
@@ -844,7 +847,8 @@ public:
 	LightInstance *directional_light;
 	LightInstance *directional_lights[RenderList::MAX_DIRECTIONAL_LIGHTS];
 
-	RenderList render_list;
+	RenderList normal_render_list;
+	RenderList depth_render_list;
 
 	_FORCE_INLINE_ void _set_cull(bool p_front, bool p_disabled, bool p_reverse_cull);
 
@@ -855,9 +859,11 @@ public:
 
 	void _render_list(RenderList::Element **p_elements, int p_element_count, const Transform &p_view_transform, const CameraMatrix &p_projection, GLuint p_base_env, bool p_reverse_cull, bool p_alpha_pass, bool p_shadow, bool p_directional_add, bool p_directional_shadows);
 
-	_FORCE_INLINE_ void _add_geometry(RasterizerStorageGLES3::Geometry *p_geometry, InstanceBase *p_instance, RasterizerStorageGLES3::GeometryOwner *p_owner, int p_material, bool p_depth_pass, bool p_shadow_pass);
+	void _render_list_depthonly(RenderList::Element **p_elements, int p_element_count, const Transform &p_view_transform, const CameraMatrix &p_projection,bool p_reverse_cull);
 
-	_FORCE_INLINE_ void _add_geometry_with_material(RasterizerStorageGLES3::Geometry *p_geometry, InstanceBase *p_instance, RasterizerStorageGLES3::GeometryOwner *p_owner, RasterizerStorageGLES3::Material *p_material, bool p_depth_pass, bool p_shadow_pass);
+	_FORCE_INLINE_ void _add_geometry(RasterizerSceneGLES3::RenderList &render_list,RasterizerStorageGLES3::Geometry *p_geometry, InstanceBase *p_instance, RasterizerStorageGLES3::GeometryOwner *p_owner, int p_material, bool p_depth_pass, bool p_shadow_pass);
+
+	_FORCE_INLINE_ void _add_geometry_with_material(RasterizerSceneGLES3::RenderList &render_list, RasterizerStorageGLES3::Geometry *p_geometry, InstanceBase *p_instance, RasterizerStorageGLES3::GeometryOwner *p_owner, RasterizerStorageGLES3::Material *p_material, bool p_depth_pass, bool p_shadow_pass);
 
 	void _draw_sky(RasterizerStorageGLES3::Sky *p_sky, const CameraMatrix &p_projection, const Transform &p_transform, bool p_vflip, float p_custom_fov, float p_energy, const Basis &p_sky_orientation);
 
@@ -869,7 +875,7 @@ public:
 	void _copy_screen(bool p_invalidate_color = false, bool p_invalidate_depth = false);
 	void _copy_texture_to_front_buffer(GLuint p_texture); //used for debug
 
-	void _fill_render_list(InstanceBase **p_cull_result, int p_cull_count, bool p_depth_pass, bool p_shadow_pass);
+	void _fill_render_list(InstanceBase **p_cull_result, int p_cull_count,bool p_base_pass, bool p_depth_pass, bool p_shadow_pass);
 
 	void _blur_effect_buffer();
 	void _render_mrts(Environment *env, const CameraMatrix &p_cam_projection);

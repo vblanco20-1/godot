@@ -531,6 +531,14 @@ struct ShadowWorkItem {
 };
 
 moodycamel::ConcurrentQueue<ShadowWorkItem> ShadowWorkQueue;
+std::future<void> async_lightmap_captures;
+bool bAsyncLightmapsCalculating = false;
+void JoinAsyncLigthmaps() {
+	//if (bAsyncLightmapsCalculating) {
+	//	async_lightmap_captures.get();
+	//}
+	//bAsyncLightmapsCalculating = false;
+}
 
 VisualServerScene::InstanceGeometryData *get_instance_geometry(RID id) {
 
@@ -1530,7 +1538,7 @@ Vector<ObjectID> VisualServerScene::instances_cull_aabb(const AABB &p_aabb, RID 
 	ERR_FAIL_COND_V(!scenario, instances);
 
 	const_cast<VisualServerScene *>(this)->update_dirty_instances(); // check dirty instances before culling
-
+	JoinAsyncLigthmaps();
 	int culled = 0;
 	Instance *cull[1024];
 	culled = scenario->octree.cull_aabb(p_aabb, cull, 1024);
@@ -1553,7 +1561,7 @@ Vector<ObjectID> VisualServerScene::instances_cull_ray(const Vector3 &p_from, co
 	Scenario *scenario = scenario_owner.get(p_scenario);
 	ERR_FAIL_COND_V(!scenario, instances);
 	const_cast<VisualServerScene *>(this)->update_dirty_instances(); // check dirty instances before culling
-
+	JoinAsyncLigthmaps();
 	int culled = 0;
 	Instance *cull[1024];
 	culled = scenario->octree.cull_segment(p_from, p_from + p_to * 10000, cull, 1024);
@@ -1575,7 +1583,7 @@ Vector<ObjectID> VisualServerScene::instances_cull_convex(const Vector<Plane> &p
 	Scenario *scenario = scenario_owner.get(p_scenario);
 	ERR_FAIL_COND_V(!scenario, instances);
 	const_cast<VisualServerScene *>(this)->update_dirty_instances(); // check dirty instances before culling
-
+	JoinAsyncLigthmaps();
 	int culled = 0;
 	Instance *cull[1024];
 
@@ -2500,7 +2508,6 @@ bool VisualServerScene::_light_instance_update_shadow(Instance *p_instance, cons
 
 						Vector<Plane> planes = cm.get_projection_planes(xform);
 						Plane near_plane(xform.origin, -xform.basis.get_axis(2));
-						
 
 						for (int b = 0; b < geo_aabbs.size(); b++) {
 							if (geo_aabbs[b].inside_convex_shape(&planes[0], 6)) {
@@ -2616,6 +2623,7 @@ void VisualServerScene::render_camera(RID p_camera, RID p_scenario, Size2 p_view
 	}
 
 	_prepare_scene(camera->transform, camera_matrix, ortho, camera->env, camera->visible_layers, p_scenario, p_shadow_atlas, RID());
+
 	_render_scene(camera->transform, camera_matrix, ortho, camera->env, p_scenario, p_shadow_atlas, RID(), -1);
 #endif
 }
@@ -3043,6 +3051,8 @@ void VisualServerScene::_prepare_scene(const Transform p_cam_transform, const Ca
 }
 
 {
+
+	JoinAsyncLigthmaps();
 	instance_cull_count = 0;
 	{
 		SCOPE_PROFILE(ProcessInstances);
@@ -4615,10 +4625,13 @@ void VisualServerScene::update_dirty_instances() {
 		}
 	}
 	{
-		SCOPE_PROFILE(lightmap_captures);
-		parallel_dequeue_concurrent_queue_unbatched(lightmap_update_queue, [this](Instance *inst) {
-			_update_instance_lightmap_captures(inst);
-		});
+		bAsyncLightmapsCalculating = true;
+		//async_lightmap_captures = std::async(std::launch::async, [this]() {
+			SCOPE_PROFILE(lightmap_captures);
+			parallel_dequeue_concurrent_queue_unbatched(lightmap_update_queue, [this](Instance *inst) {
+				_update_instance_lightmap_captures(inst);
+			});
+		//});
 		VSG::ecs->registry.reset<Dirty>();
 	}
 }
@@ -4641,7 +4654,7 @@ bool VisualServerScene::free(RID p_rid) {
 		// delete the instance
 
 		update_dirty_instances();
-
+		
 		Instance *instance = instance_owner.get(p_rid);
 
 		instance_set_use_lightmap(p_rid, RID(), RID());
@@ -4651,7 +4664,7 @@ bool VisualServerScene::free(RID p_rid) {
 		instance_attach_skeleton(p_rid, RID());
 
 		update_dirty_instances(); //in case something changed this
-
+		JoinAsyncLigthmaps();
 		if (VSG::ecs->registry.valid(p_rid.eid)) {
 			VSG::ecs->registry.destroy(p_rid.eid);
 		}

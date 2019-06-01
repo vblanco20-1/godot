@@ -58,6 +58,72 @@ class RasterizerSceneGLES3;
 
 void glTexStorage2DCustom(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLenum format, GLenum type);
 
+template <typename T, int N>
+class SmallVector {
+	static_assert(N > 0);
+
+	Vector<T> big_vector;
+	T small_vector[N];
+	T *_data;
+	size_t _size = 0;
+	size_t alloc_size = N;
+	bool bUseBig = false;
+
+public:
+	SmallVector() {
+		_data = small_vector;
+	}
+	void push_back(T item) {
+		//if (bUseBig) {
+		//	big_vector.push_back(item);
+		//} else {
+		if (_size < alloc_size) {
+
+			_data[_size] = item;
+			_size++;
+			if (_size > alloc_size) {
+
+				grow(alloc_size * 1.5);
+			}
+		} 
+	}
+	void grow(size_t newsize) {
+		T *newData = new T[newsize];
+		alloc_size = newsize;
+		for (int i = 0; i < newsize; i++) {
+			newData[i] = _data[i];
+		}
+		delete _data;
+		_data = newData;
+	}
+	const T &operator[](int index) const {
+		return _data[index];
+		//if (bUseBig) {
+		//	return big_vector[index];
+		//} else {
+		//	return small_vector[index];
+		//}
+	}
+
+	void remove(int p_index) {
+		//if (bUseBig) {
+		//	big_vector.remove(p_index);
+		//
+		//} else {
+		T *p = _data;
+		int len = size();
+		for (int i = p_index; i < len - 1; i++) {
+			p[i] = p[i + 1];
+		};
+		//}
+		_size--;
+	}
+
+	size_t size() const {
+		return _size;
+	}
+};
+
 class RasterizerStorageGLES3 : public RasterizerStorage {
 public:
 	RasterizerCanvasGLES3 *canvas;
@@ -696,6 +762,8 @@ public:
 
 		bool active;
 		Vector<Surface *> surfaces;
+		//SmallVector<Surface *, 4> surfaces;
+
 		int blend_shape_count;
 		VS::BlendShapeMode blend_shape_mode;
 		AABB custom_aabb;
